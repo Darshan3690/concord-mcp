@@ -15,7 +15,7 @@ import { readUserConfig, writeUserConfig } from '../../src/config/user-config.js
 import { openRepositories } from '../../src/db/index.js';
 import { openContext } from '../../src/cli/context.js';
 import { WorkspaceManager } from '../../src/workspaces/manager.js';
-import { GENERAL_PROJECT, resolveStore } from '../../src/workspaces/store.js';
+import { GENERAL_PROJECT, artifactDirName, resolveStore } from '../../src/workspaces/store.js';
 
 function dir(label: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), `concord-${label}-`)));
@@ -72,6 +72,14 @@ describe('resolveStore', () => {
     const root = repoDir('no-remote');
     expect(resolveStore(root, env, noRemote).project).toBe(root);
     expect(resolveStore(dir('scratch'), env, noRemote).project).toBe(GENERAL_PROJECT);
+  });
+
+  it('keeps artifact directory names short for deeply nested repositories', () => {
+    const deep = `/${'nested-directory/'.repeat(30)}repo`;
+    const name = artifactDirName(deep);
+    expect(name.length).toBeLessThanOrEqual(73);
+    expect(name).toMatch(/directory-repo-[0-9a-f]{8}$/u);
+    expect(artifactDirName(`${deep}2`)).not.toBe(name);
   });
 
   it('keeps a set-up repository in its own store even with global mode on', () => {

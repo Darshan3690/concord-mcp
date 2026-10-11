@@ -14,6 +14,8 @@ const GLOBAL_DB_FILENAME = 'global.db';
 const USER_CONFIG_FILENAME = 'config.json';
 
 const userConfigSchema = z.object({ globalMode: z.boolean().optional() }).loose();
+/** The whole file as JSON, so settings this version does not know survive a write. */
+const storedConfigSchema = z.record(z.string(), z.json());
 
 /** The user's choices, from `~/.concord/config.json`. */
 export interface UserConfig {
@@ -51,9 +53,9 @@ export function readUserConfig(env: NodeJS.ProcessEnv): UserConfig {
 /** Merge `update` into the user's settings, keeping any keys this version does not know. */
 export function writeUserConfig(env: NodeJS.ProcessEnv, update: UserConfig): string {
   const path = userConfigPath(env);
-  let current: Record<string, unknown> = {};
+  let current: z.infer<typeof storedConfigSchema> = {};
   try {
-    current = userConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+    current = storedConfigSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
   } catch {
     // Missing or unreadable: start from the update alone.
   }

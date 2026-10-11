@@ -57,9 +57,15 @@ export function globalProjectKey(repoRoot: string, originRemote: OriginRemote): 
   return (remote === undefined ? null : normalizeProjectKey(remote)) ?? repoRoot;
 }
 
+/** Characters of the project key kept in its directory name, well under any name limit. */
+const READABLE_NAME_LENGTH = 64;
+
 /** A readable directory name for a project's artifacts, unique by its hash. */
-function artifactDirName(project: string): string {
-  const readable = project.replace(/[^a-z0-9._-]+/giu, '-').replace(/^-+|-+$/gu, '');
+export function artifactDirName(project: string): string {
+  const readable = project
+    .replace(/[^a-z0-9._-]+/giu, '-')
+    .slice(-READABLE_NAME_LENGTH)
+    .replace(/^-+|-+$/gu, '');
   const hash = createHash('sha256').update(project).digest('hex').slice(0, 8);
   return `${readable === '' ? 'project' : readable}-${hash}`;
 }

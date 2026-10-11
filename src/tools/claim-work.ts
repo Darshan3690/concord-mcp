@@ -1,7 +1,7 @@
 import type { Repositories, TaskRecord } from '../db/index.js';
 import { assessClaimBreadth } from '../domain/decomposition.js';
 import type { ClaimWorkInput } from '../domain/operations.js';
-import { detectOverlaps, type OverlapWarning } from '../domain/overlap.js';
+import { CLAIMED_STATUSES, detectOverlaps, type OverlapWarning } from '../domain/overlap.js';
 
 export interface ClaimWorkResult {
   task: TaskRecord;
@@ -80,7 +80,7 @@ export function handleClaimWork(repos: Repositories, input: ClaimWorkInput): Cla
 
   const activeOthers = repos.tasks
     .list()
-    .filter((task) => task.taskId !== input.task_id && task.status === 'active');
+    .filter((task) => task.taskId !== input.task_id && CLAIMED_STATUSES.has(task.status));
 
   const overlaps = detectOverlaps({ taskId: input.task_id, parentTaskId, ...scope }, activeOthers);
 

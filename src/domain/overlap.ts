@@ -1,6 +1,19 @@
 import { posix } from 'node:path';
 
-import type { TaskRecord } from '../db/index.js';
+import type { TaskRecord, TaskStatus } from '../db/index.js';
+
+/**
+ * Statuses in which a task still owns its declared scope: someone is working on
+ * it or is about to (an assignee who has not started, a pending handoff
+ * recipient). Claim-time and edit-time overlap checks both compare against
+ * these, so they agree on what counts as a collision.
+ */
+export const CLAIMED_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
+  'assigned',
+  'active',
+  'blocked',
+  'handoff_offered',
+]);
 
 /** The declared surface of a task, used to compare against other tasks. */
 export interface OverlapSurface {

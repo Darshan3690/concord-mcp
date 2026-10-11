@@ -2,26 +2,15 @@
 export const LOCAL_PROJECT = '';
 
 /**
- * Migration 012 — tasks belong to a project.
+ * Migration 012 — a task is unique per `(project, task_id)`, as Concord Cloud
+ * keys it, so one store can hold several repositories whose agents chose the
+ * same task id. Existing rows land in `LOCAL_PROJECT`, unchanged in behaviour.
  *
- * One database can hold several repositories' work: the machine-wide store
- * keeps every repository that was never set up, plus `general` for sessions
- * outside any repository. Agents choose task ids (`TASK-1`), so two
- * repositories can use the same one; a task is therefore unique per
- * `(project, task_id)`, as Concord Cloud keys it per project.
- *
- * A repository's own `.concord/` store is a single project, the empty key, so
- * every existing row lands there and its behaviour is unchanged.
- *
- * SQLite cannot change a primary key or a foreign key in place, so `tasks` and
- * every table that references it are rebuilt and copied. Each copy is
- * `SELECT *, ''`: the new table repeats the version-11 columns in order, with
- * `project` appended, and this migration only ever runs on version 11.
- *
- * The migration runner turns foreign-key enforcement off around it, as
- * SQLite's table-rebuild procedure requires, and checks the result before
- * committing. Agents, endpoints and message events are not task-scoped and
- * are left alone.
+ * SQLite cannot change a key in place, so `tasks` and every table referencing
+ * it are rebuilt. Each copy is `SELECT *, ''`: the new table repeats the
+ * version-11 columns in order with `project` appended, and this only ever runs
+ * on version 11. The runner disables foreign keys around it, as SQLite's
+ * rebuild procedure requires, and checks them before committing.
  */
 export const PROJECT_SCOPE_MIGRATION = `
   CREATE TABLE tasks_012 (

@@ -63,7 +63,7 @@ export function createHandoffRepository(
       @task_version, @resolution_reason, @reported_outcome, @created_at
     )
   `);
-  const getByIdStmt = db.prepare('SELECT * FROM handoffs WHERE id = ?');
+  const getByIdStmt = db.prepare('SELECT * FROM handoffs WHERE project = ? AND id = ?');
   const listByTaskStmt = db.prepare(
     'SELECT * FROM handoffs WHERE project = ? AND task_id = ? ORDER BY created_at ASC, id ASC',
   );
@@ -81,11 +81,11 @@ export function createHandoffRepository(
      SET delivery_status = @delivery_status,
          resolved_at = @resolved_at,
          resolution_reason = @resolution_reason
-     WHERE id = @id AND delivery_status = 'pending'`,
+     WHERE project = @project AND id = @id AND delivery_status = 'pending'`,
   );
 
   function get(id: number): HandoffRecord | undefined {
-    const raw: unknown = getByIdStmt.get(id);
+    const raw: unknown = getByIdStmt.get(project, id);
     return raw === undefined ? undefined : parseHandoffRow(raw);
   }
 
@@ -117,7 +117,7 @@ export function createHandoffRepository(
             : JSON.stringify(handoff.reportedOutcome),
         created_at: new Date().toISOString(),
       });
-      const raw: unknown = getByIdStmt.get(info.lastInsertRowid);
+      const raw: unknown = getByIdStmt.get(project, info.lastInsertRowid);
       if (raw === undefined) {
         throw new Error(`Handoff ${String(info.lastInsertRowid)} could not be read back`);
       }
@@ -141,6 +141,7 @@ export function createHandoffRepository(
     },
     resolve(id, status, reason) {
       const info = resolveStmt.run({
+        project,
         id,
         delivery_status: status,
         resolved_at: new Date().toISOString(),

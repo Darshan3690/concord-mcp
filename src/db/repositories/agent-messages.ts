@@ -46,10 +46,7 @@ export interface AgentMessageRepository {
 
 const rawListSchema = z.array(z.unknown());
 
-/**
- * Messages are addressed to agents, so they are read across every project in
- * the store; only the task a message names is looked up within `project`.
- */
+/** Messages span the store; only the task a message names is scoped to `project`. */
 export function createAgentMessageRepository(
   db: ConcordDatabase,
   project: string = LOCAL_PROJECT,

@@ -74,10 +74,7 @@ export interface Repositories {
   ownershipEvents: OwnershipEventRepository;
 }
 
-/**
- * Bind all repositories to an already-open database. Task-scoped repositories
- * see only `project`; agents, endpoints and messages span the whole store.
- */
+/** Bind all repositories to an open database; task-scoped ones see only `project`. */
 export function createRepositories(
   db: ConcordDatabase,
   project: string = LOCAL_PROJECT,

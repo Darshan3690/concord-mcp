@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { ConcordDatabase } from '../connection.js';
+import { LOCAL_PROJECT } from '../project-scope-migration.js';
 import {
   parseAgentMessageEventRow,
   parseAgentMessageRow,
@@ -45,13 +46,20 @@ export interface AgentMessageRepository {
 
 const rawListSchema = z.array(z.unknown());
 
-export function createAgentMessageRepository(db: ConcordDatabase): AgentMessageRepository {
+/**
+ * Messages are addressed to agents, so they are read across every project in
+ * the store; only the task a message names is looked up within `project`.
+ */
+export function createAgentMessageRepository(
+  db: ConcordDatabase,
+  project: string = LOCAL_PROJECT,
+): AgentMessageRepository {
   const insertStmt = db.prepare(`
     INSERT INTO agent_messages (
-      message_id, task_id, sender_agent_id, recipient_agent_id, reply_to_message_id,
+      message_id, project, task_id, sender_agent_id, recipient_agent_id, reply_to_message_id,
       content, delivery_mode, status, idempotency_key, created_at
     ) VALUES (
-      @message_id, @task_id, @sender_agent_id, @recipient_agent_id, @reply_to_message_id,
+      @message_id, @project, @task_id, @sender_agent_id, @recipient_agent_id, @reply_to_message_id,
       @content, 'steer', 'pending', @idempotency_key, @created_at
     )
   `);
@@ -70,7 +78,8 @@ export function createAgentMessageRepository(db: ConcordDatabase): AgentMessageR
     ORDER BY created_at, message_id
   `);
   const listByTaskStmt = db.prepare(`
-    SELECT * FROM agent_messages WHERE task_id = ? ORDER BY created_at, message_id
+    SELECT * FROM agent_messages WHERE project = ? AND task_id = ?
+    ORDER BY created_at, message_id
   `);
   const markDeliveredStmt = db.prepare(`
     UPDATE agent_messages
@@ -142,6 +151,7 @@ export function createAgentMessageRepository(db: ConcordDatabase): AgentMessageR
     create(message) {
       insertStmt.run({
         message_id: message.messageId,
+        project,
         task_id: message.taskId,
         sender_agent_id: message.senderAgentId,
         recipient_agent_id: message.recipientAgentId,
@@ -171,7 +181,7 @@ export function createAgentMessageRepository(db: ConcordDatabase): AgentMessageR
       return claimTransaction.immediate(agentId, provider);
     },
     listByTask(taskId) {
-      const raw: unknown = listByTaskStmt.all(taskId);
+      const raw: unknown = listByTaskStmt.all(project, taskId);
       return rawListSchema.parse(raw).map(parseAgentMessageRow);
     },
     listThread(messageId) {

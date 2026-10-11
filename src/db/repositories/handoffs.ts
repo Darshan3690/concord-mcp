@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { ConcordDatabase } from '../connection.js';
+import { LOCAL_PROJECT } from '../project-scope-migration.js';
 import {
   parseHandoffRow,
   serializeStringArray,
@@ -45,15 +46,18 @@ export interface HandoffRepository {
 
 const rawListSchema = z.array(z.unknown());
 
-export function createHandoffRepository(db: ConcordDatabase): HandoffRepository {
+export function createHandoffRepository(
+  db: ConcordDatabase,
+  project: string = LOCAL_PROJECT,
+): HandoffRepository {
   const insertStmt = db.prepare(`
     INSERT INTO handoffs (
-      task_id, status, changed_files, what_changed, tests_run, known_risks,
+      project, task_id, status, changed_files, what_changed, tests_run, known_risks,
       assumptions, decisions, guardrails_checked, needs_review_from, next_steps,
       from_agent_id, to_agent_id, delivery_status, expires_at, resolved_at,
       task_version, resolution_reason, reported_outcome, created_at
     ) VALUES (
-      @task_id, @status, @changed_files, @what_changed, @tests_run, @known_risks,
+      @project, @task_id, @status, @changed_files, @what_changed, @tests_run, @known_risks,
       @assumptions, @decisions, @guardrails_checked, @needs_review_from, @next_steps,
       @from_agent_id, @to_agent_id, @delivery_status, @expires_at, @resolved_at,
       @task_version, @resolution_reason, @reported_outcome, @created_at
@@ -61,14 +65,15 @@ export function createHandoffRepository(db: ConcordDatabase): HandoffRepository 
   `);
   const getByIdStmt = db.prepare('SELECT * FROM handoffs WHERE id = ?');
   const listByTaskStmt = db.prepare(
-    'SELECT * FROM handoffs WHERE task_id = ? ORDER BY created_at ASC, id ASC',
+    'SELECT * FROM handoffs WHERE project = ? AND task_id = ? ORDER BY created_at ASC, id ASC',
   );
   const latestStmt = db.prepare(
-    'SELECT * FROM handoffs WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+    `SELECT * FROM handoffs WHERE project = ? AND task_id = ?
+     ORDER BY created_at DESC, id DESC LIMIT 1`,
   );
   const pendingStmt = db.prepare(
     `SELECT * FROM handoffs
-     WHERE task_id = ? AND delivery_status = 'pending'
+     WHERE project = ? AND task_id = ? AND delivery_status = 'pending'
      ORDER BY id DESC LIMIT 1`,
   );
   const resolveStmt = db.prepare(
@@ -87,6 +92,7 @@ export function createHandoffRepository(db: ConcordDatabase): HandoffRepository 
   return {
     create(handoff) {
       const info = insertStmt.run({
+        project,
         task_id: handoff.taskId,
         status: handoff.status,
         changed_files: serializeStringArray(handoff.changedFiles),
@@ -118,11 +124,11 @@ export function createHandoffRepository(db: ConcordDatabase): HandoffRepository 
       return parseHandoffRow(raw);
     },
     listByTask(taskId) {
-      const raw: unknown = listByTaskStmt.all(taskId);
+      const raw: unknown = listByTaskStmt.all(project, taskId);
       return rawListSchema.parse(raw).map(parseHandoffRow);
     },
     latestForTask(taskId) {
-      const raw: unknown = latestStmt.get(taskId);
+      const raw: unknown = latestStmt.get(project, taskId);
       if (raw === undefined) {
         return undefined;
       }
@@ -130,7 +136,7 @@ export function createHandoffRepository(db: ConcordDatabase): HandoffRepository 
     },
     get,
     pendingForTask(taskId) {
-      const raw: unknown = pendingStmt.get(taskId);
+      const raw: unknown = pendingStmt.get(project, taskId);
       return raw === undefined ? undefined : parseHandoffRow(raw);
     },
     resolve(id, status, reason) {

@@ -1,4 +1,5 @@
 import { openDatabase, type ConcordDatabase } from './connection.js';
+import { LOCAL_PROJECT } from './project-scope-migration.js';
 import {
   createAgentEndpointRepository,
   type AgentEndpointRepository,
@@ -23,6 +24,7 @@ import { createTaskRepository, type TaskRepository } from './repositories/tasks.
 
 export type { ConcordDatabase } from './connection.js';
 export { openDatabase } from './connection.js';
+export { LOCAL_PROJECT } from './project-scope-migration.js';
 export type { NewTask, TaskRepository } from './repositories/tasks.js';
 export type { NewHandoff, HandoffRepository } from './repositories/handoffs.js';
 export type { NewReview, ReviewRepository } from './repositories/reviews.js';
@@ -72,19 +74,25 @@ export interface Repositories {
   ownershipEvents: OwnershipEventRepository;
 }
 
-/** Bind all repositories to an already-open database. */
-export function createRepositories(db: ConcordDatabase): Repositories {
+/**
+ * Bind all repositories to an already-open database. Task-scoped repositories
+ * see only `project`; agents, endpoints and messages span the whole store.
+ */
+export function createRepositories(
+  db: ConcordDatabase,
+  project: string = LOCAL_PROJECT,
+): Repositories {
   return {
     db,
-    tasks: createTaskRepository(db),
-    handoffs: createHandoffRepository(db),
-    reviews: createReviewRepository(db),
-    taskUpdates: createTaskUpdateRepository(db),
-    events: createEventRepository(db),
+    tasks: createTaskRepository(db, project),
+    handoffs: createHandoffRepository(db, project),
+    reviews: createReviewRepository(db, project),
+    taskUpdates: createTaskUpdateRepository(db, project),
+    events: createEventRepository(db, project),
     agents: createAgentRepository(db),
     agentEndpoints: createAgentEndpointRepository(db),
-    agentMessages: createAgentMessageRepository(db),
-    ownershipEvents: createOwnershipEventRepository(db),
+    agentMessages: createAgentMessageRepository(db, project),
+    ownershipEvents: createOwnershipEventRepository(db, project),
   };
 }
 

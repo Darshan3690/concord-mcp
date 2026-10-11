@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { ConcordDatabase } from '../connection.js';
+import { LOCAL_PROJECT } from '../project-scope-migration.js';
 import { parseEventRow, type EventRecord, type EventStatus, type ToolName } from '../rows.js';
 
 /** Input for recording a tool-invocation event (adoption + provenance log). */
@@ -19,20 +20,26 @@ export interface EventRepository {
 
 const rawListSchema = z.array(z.unknown());
 
-export function createEventRepository(db: ConcordDatabase): EventRepository {
+export function createEventRepository(
+  db: ConcordDatabase,
+  project: string = LOCAL_PROJECT,
+): EventRepository {
   const insertStmt = db.prepare(`
-    INSERT INTO events (task_id, tool, status, detail, created_at)
-    VALUES (@task_id, @tool, @status, @detail, @created_at)
+    INSERT INTO events (project, task_id, tool, status, detail, created_at)
+    VALUES (@project, @task_id, @tool, @status, @detail, @created_at)
   `);
   const getByIdStmt = db.prepare('SELECT * FROM events WHERE id = ?');
-  const listStmt = db.prepare('SELECT * FROM events ORDER BY created_at ASC, id ASC');
+  const listStmt = db.prepare(
+    'SELECT * FROM events WHERE project = ? ORDER BY created_at ASC, id ASC',
+  );
   const listByTaskStmt = db.prepare(
-    'SELECT * FROM events WHERE task_id = ? ORDER BY created_at ASC, id ASC',
+    'SELECT * FROM events WHERE project = ? AND task_id = ? ORDER BY created_at ASC, id ASC',
   );
 
   return {
     record(event) {
       const info = insertStmt.run({
+        project,
         task_id: event.taskId,
         tool: event.tool,
         status: event.status,
@@ -46,11 +53,11 @@ export function createEventRepository(db: ConcordDatabase): EventRepository {
       return parseEventRow(raw);
     },
     list() {
-      const raw: unknown = listStmt.all();
+      const raw: unknown = listStmt.all(project);
       return rawListSchema.parse(raw).map(parseEventRow);
     },
     listByTask(taskId) {
-      const raw: unknown = listByTaskStmt.all(taskId);
+      const raw: unknown = listByTaskStmt.all(project, taskId);
       return rawListSchema.parse(raw).map(parseEventRow);
     },
   };

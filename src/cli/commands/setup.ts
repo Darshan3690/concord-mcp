@@ -137,7 +137,8 @@ export function ensureConcordIgnored(concordPath: string): void {
 /** Set up one repository completely: state, instructions, and client registration. */
 export function runSetup(cwd: string, options: SetupOptions = {}): SetupResult {
   const env = options.env ?? process.env;
-  const ctx = openContext(cwd, env);
+  // Setting a repository up gives it its own store, whatever global mode says.
+  const ctx = openContext(cwd, env, { local: true });
 
   ensureConcordIgnored(ctx.concordPath);
   writeArtifacts(ctx.concordPath, ctx.repos);

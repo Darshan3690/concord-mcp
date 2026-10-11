@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
@@ -28,6 +28,7 @@ import { browserLogin, type BrowserLoginDeps } from '../../cloud/browser-login.j
 import { bearerFor } from '../../cloud/tokens.js';
 import { resolveRepoRoot } from '../../config/paths.js';
 import { normalizeProjectKey } from '../../domain/project-key.js';
+import { gitOriginRemote } from '../../workspaces/store.js';
 import { VERSION } from '../../version.js';
 
 /**
@@ -208,14 +209,6 @@ export async function runCloudStatus(deps: CloudDeps): Promise<string> {
   return lines.join('\n');
 }
 
-function originRemote(repoRoot: string): string | undefined {
-  const result = spawnSync('git', ['-C', repoRoot, 'remote', 'get-url', 'origin'], {
-    encoding: 'utf8',
-  });
-  const url = result.status === 0 ? result.stdout.trim() : '';
-  return url === '' ? undefined : url;
-}
-
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
@@ -259,7 +252,7 @@ function liveDeps(): CloudDeps {
     cwd: process.cwd(),
     fetch,
     readStdin,
-    originRemote,
+    originRemote: gitOriginRemote,
     hostname,
     newMachineKey: randomUUID,
     browser: {

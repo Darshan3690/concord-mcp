@@ -93,7 +93,7 @@ export function createRepositories(
   };
 }
 
-/** Open the database at `filename` and bind all repositories. */
-export function openRepositories(filename: string): Repositories {
-  return createRepositories(openDatabase(filename));
+/** Open the database at `filename` and bind all repositories to `project`. */
+export function openRepositories(filename: string, project: string = LOCAL_PROJECT): Repositories {
+  return createRepositories(openDatabase(filename), project);
 }

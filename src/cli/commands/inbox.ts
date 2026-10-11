@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 
 import type { Command } from '@commander-js/extra-typings';
 
-import { databasePath, resolveRepoRoot } from '../../config/paths.js';
+import { resolveRepoRoot } from '../../config/paths.js';
 import type { Repositories } from '../../db/index.js';
 import {
   capabilityFor,
@@ -25,6 +25,7 @@ import {
 import { ensureAgentRegistered } from '../../tools/register-agent.js';
 import type { TelemetryRecorder } from '../../telemetry/events.js';
 import { resolveAgentId } from '../agent-identity.js';
+import { resolveStore } from '../../workspaces/store.js';
 import { openContext } from '../context.js';
 import {
   cloudAccess,
@@ -207,7 +208,7 @@ function registeredLine(agentId: string): string {
 
 function workspaceExists(cwd: string): boolean {
   try {
-    return existsSync(databasePath(resolveRepoRoot(cwd, process.env)));
+    return existsSync(resolveStore(resolveRepoRoot(cwd, process.env), process.env).databasePath);
   } catch {
     return false;
   }

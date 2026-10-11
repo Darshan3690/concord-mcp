@@ -1,13 +1,12 @@
 import { delimiter } from 'node:path';
 
 import {
-  concordDir,
-  databasePath,
   resolveExplicitRepoRoot,
   workspaceIdForRoot,
   workspaceRootFromId,
 } from '../config/paths.js';
 import { openRepositories, type Repositories } from '../db/index.js';
+import { resolveStore, type StoreLocation } from './store.js';
 
 export interface WorkspaceIdentity {
   workspaceId: string;
@@ -25,7 +24,9 @@ export interface WorkspaceSelection extends WorkspaceIdentity {
 
 export interface WorkspaceManagerOptions {
   allowedRoots?: readonly string[];
-  open?: (databaseFilename: string) => Repositories;
+  open?: (databaseFilename: string, project: string) => Repositories;
+  /** Where a root's state lives; the repository's own store unless global mode applies. */
+  resolveStore?: (repoRoot: string) => StoreLocation;
 }
 
 /**
@@ -37,11 +38,13 @@ export interface WorkspaceManagerOptions {
 export class WorkspaceManager {
   readonly #contexts = new Map<string, WorkspaceContext>();
   readonly #allowedRoots: Set<string> | undefined;
-  readonly #open: (databaseFilename: string) => Repositories;
+  readonly #open: (databaseFilename: string, project: string) => Repositories;
+  readonly #resolveStore: (repoRoot: string) => StoreLocation;
   #activeWorkspaceId: string;
 
   constructor(initialRoot: string, options: WorkspaceManagerOptions = {}) {
     this.#open = options.open ?? openRepositories;
+    this.#resolveStore = options.resolveStore ?? ((root) => resolveStore(root, process.env));
     this.#allowedRoots =
       options.allowedRoots === undefined
         ? undefined
@@ -64,9 +67,10 @@ export class WorkspaceManager {
             .split(delimiter)
             .map((root) => root.trim())
             .filter((root) => root !== '');
+    const withStore = { resolveStore: (root: string) => resolveStore(root, env), ...options };
     return new WorkspaceManager(
       initialRoot,
-      allowedRoots === undefined ? options : { ...options, allowedRoots },
+      allowedRoots === undefined ? withStore : { ...withStore, allowedRoots },
     );
   }
 
@@ -87,11 +91,12 @@ export class WorkspaceManager {
     let context = this.#contexts.get(workspaceId);
     const firstOpen = context === undefined;
     if (context === undefined) {
+      const store = this.#resolveStore(repoRoot);
       context = {
         workspaceId,
         repoRoot,
-        concordPath: concordDir(repoRoot),
-        repos: this.#open(databasePath(repoRoot)),
+        concordPath: store.concordPath,
+        repos: this.#open(store.databasePath, store.project),
       };
       this.#contexts.set(workspaceId, context);
     }

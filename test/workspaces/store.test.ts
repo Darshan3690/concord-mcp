@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 
 import { readUserConfig, writeUserConfig } from '../../src/config/user-config.js';
 import { openRepositories } from '../../src/db/index.js';
+import { workspaceExists } from '../../src/cli/commands/inbox.js';
 import { openContext } from '../../src/cli/context.js';
 import { WorkspaceManager } from '../../src/workspaces/manager.js';
 import { GENERAL_PROJECT, artifactDirName, resolveStore } from '../../src/workspaces/store.js';
@@ -86,6 +87,16 @@ describe('resolveStore', () => {
     const root = repoDir('set-up');
     openRepositories(join(root, '.concord', 'concord.db')).db.close();
     expect(resolveStore(root, globalEnv(), noRemote).kind).toBe('local');
+  });
+});
+
+describe('inbox hooks', () => {
+  it('serve a global workspace before its database exists, but not an unset-up repo', () => {
+    const root = repoDir('first-session');
+    const env = { ...globalEnv(), CONCORD_REPO_ROOT: root };
+    expect(existsSync(join(env.HOME, '.concord', 'global.db'))).toBe(false);
+    expect(workspaceExists(root, env)).toBe(true);
+    expect(workspaceExists(root, { HOME: dir('home'), CONCORD_REPO_ROOT: root })).toBe(false);
   });
 });
 

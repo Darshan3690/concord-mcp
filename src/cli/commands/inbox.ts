@@ -206,9 +206,15 @@ function registeredLine(agentId: string): string {
   );
 }
 
-function workspaceExists(cwd: string): boolean {
+/**
+ * Whether hooks here have a workspace to serve. A repository's own store must
+ * already exist; the machine-wide store counts as soon as global mode chooses
+ * it, since a session's first hook can run before its MCP server creates it.
+ */
+export function workspaceExists(cwd: string, env: NodeJS.ProcessEnv = process.env): boolean {
   try {
-    return existsSync(resolveStore(resolveRepoRoot(cwd, process.env), process.env).databasePath);
+    const store = resolveStore(resolveRepoRoot(cwd, env), env);
+    return store.kind === 'global' || existsSync(store.databasePath);
   } catch {
     return false;
   }

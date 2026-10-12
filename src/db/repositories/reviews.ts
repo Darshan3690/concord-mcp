@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { ConcordDatabase } from '../connection.js';
+import { LOCAL_PROJECT } from '../project-scope-migration.js';
 import {
   parseReviewRow,
   serializeProvenance,
@@ -31,27 +32,32 @@ export interface ReviewRepository {
 const rawListSchema = z.array(z.unknown());
 const REVIEW_QUERY_CHUNK_SIZE = 500;
 
-export function createReviewRepository(db: ConcordDatabase): ReviewRepository {
+export function createReviewRepository(
+  db: ConcordDatabase,
+  project: string = LOCAL_PROJECT,
+): ReviewRepository {
   const insertStmt = db.prepare(`
     INSERT INTO reviews (
-      task_id, plan_summary, tests_run, diff_size, guardrails_checked,
+      project, task_id, plan_summary, tests_run, diff_size, guardrails_checked,
       assumptions, open_questions, provenance, created_at
     ) VALUES (
-      @task_id, @plan_summary, @tests_run, @diff_size, @guardrails_checked,
+      @project, @task_id, @plan_summary, @tests_run, @diff_size, @guardrails_checked,
       @assumptions, @open_questions, @provenance, @created_at
     )
   `);
   const getByIdStmt = db.prepare('SELECT * FROM reviews WHERE id = ?');
   const listByTaskStmt = db.prepare(
-    'SELECT * FROM reviews WHERE task_id = ? ORDER BY created_at ASC, id ASC',
+    'SELECT * FROM reviews WHERE project = ? AND task_id = ? ORDER BY created_at ASC, id ASC',
   );
   const latestStmt = db.prepare(
-    'SELECT * FROM reviews WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+    `SELECT * FROM reviews WHERE project = ? AND task_id = ?
+     ORDER BY created_at DESC, id DESC LIMIT 1`,
   );
 
   return {
     create(review) {
       const info = insertStmt.run({
+        project,
         task_id: review.taskId,
         plan_summary: review.planSummary,
         tests_run: serializeStringArray(review.testsRun),
@@ -69,11 +75,11 @@ export function createReviewRepository(db: ConcordDatabase): ReviewRepository {
       return parseReviewRow(raw);
     },
     listByTask(taskId) {
-      const raw: unknown = listByTaskStmt.all(taskId);
+      const raw: unknown = listByTaskStmt.all(project, taskId);
       return rawListSchema.parse(raw).map(parseReviewRow);
     },
     latestForTask(taskId) {
-      const raw: unknown = latestStmt.get(taskId);
+      const raw: unknown = latestStmt.get(project, taskId);
       if (raw === undefined) {
         return undefined;
       }
@@ -94,11 +100,11 @@ export function createReviewRepository(db: ConcordDatabase): ReviewRepository {
              JOIN (
                SELECT task_id, MAX(id) AS id
                FROM reviews
-               WHERE task_id IN (${placeholders})
+               WHERE project = ? AND task_id IN (${placeholders})
                GROUP BY task_id
              ) latest ON latest.id = r.id`,
           )
-          .all(...chunk);
+          .all(project, ...chunk);
         reviews.push(...rawListSchema.parse(raw).map(parseReviewRow));
       }
 

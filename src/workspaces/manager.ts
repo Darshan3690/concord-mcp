@@ -1,13 +1,12 @@
 import { delimiter } from 'node:path';
 
 import {
-  concordDir,
-  databasePath,
   resolveExplicitRepoRoot,
   workspaceIdForRoot,
   workspaceRootFromId,
 } from '../config/paths.js';
 import { openRepositories, type Repositories } from '../db/index.js';
+import { resolveStore, type StoreLocation } from './store.js';
 
 export interface WorkspaceIdentity {
   workspaceId: string;
@@ -25,7 +24,9 @@ export interface WorkspaceSelection extends WorkspaceIdentity {
 
 export interface WorkspaceManagerOptions {
   allowedRoots?: readonly string[];
-  open?: (databaseFilename: string) => Repositories;
+  open?: (databaseFilename: string, project: string) => Repositories;
+  /** Where a root's state lives; the repository's own store unless global mode applies. */
+  resolveStore?: (repoRoot: string) => StoreLocation;
 }
 
 /**
@@ -37,11 +38,15 @@ export interface WorkspaceManagerOptions {
 export class WorkspaceManager {
   readonly #contexts = new Map<string, WorkspaceContext>();
   readonly #allowedRoots: Set<string> | undefined;
-  readonly #open: (databaseFilename: string) => Repositories;
+  readonly #open: (databaseFilename: string, project: string) => Repositories;
+  readonly #resolveStore: (repoRoot: string) => StoreLocation;
   #activeWorkspaceId: string;
+  #selections = 0;
+  #refusal: string | undefined;
 
   constructor(initialRoot: string, options: WorkspaceManagerOptions = {}) {
     this.#open = options.open ?? openRepositories;
+    this.#resolveStore = options.resolveStore ?? ((root) => resolveStore(root, process.env));
     this.#allowedRoots =
       options.allowedRoots === undefined
         ? undefined
@@ -64,14 +69,35 @@ export class WorkspaceManager {
             .split(delimiter)
             .map((root) => root.trim())
             .filter((root) => root !== '');
+    const withStore = { resolveStore: (root: string) => resolveStore(root, env), ...options };
     return new WorkspaceManager(
       initialRoot,
-      allowedRoots === undefined ? options : { ...options, allowedRoots },
+      allowedRoots === undefined ? withStore : { ...withStore, allowedRoots },
     );
+  }
+
+  /** How many times a workspace has been chosen, by a tool call or a join. */
+  get selections(): number {
+    return this.#selections;
+  }
+
+  /**
+   * The active workspace's root without throwing: undefined once refused.
+   * For diagnostics such as telemetry, which must never block a reply.
+   */
+  get activeRoot(): string | undefined {
+    if (this.#refusal !== undefined) return undefined;
+    return this.#contexts.get(this.#activeWorkspaceId)?.repoRoot;
+  }
+
+  /** Refuse every operation from now on, with `reason` as the error. */
+  refuse(reason: string): void {
+    this.#refusal = reason;
   }
 
   /** The active/default context used when an operation omits `workspace_id`. */
   current(): WorkspaceContext {
+    if (this.#refusal !== undefined) throw new Error(this.#refusal);
     const context = this.#contexts.get(this.#activeWorkspaceId);
     if (context === undefined) {
       throw new Error('Concord has no active workspace.');
@@ -81,17 +107,19 @@ export class WorkspaceManager {
 
   /** Validate, open (once), and make a repository root active. */
   join(root: string): WorkspaceSelection {
+    this.#selections += 1;
     const repoRoot = resolveExplicitRepoRoot(root);
     this.#assertAllowed(repoRoot);
     const workspaceId = workspaceIdForRoot(repoRoot);
     let context = this.#contexts.get(workspaceId);
     const firstOpen = context === undefined;
     if (context === undefined) {
+      const store = this.#resolveStore(repoRoot);
       context = {
         workspaceId,
         repoRoot,
-        concordPath: concordDir(repoRoot),
-        repos: this.#open(databasePath(repoRoot)),
+        concordPath: store.concordPath,
+        repos: this.#open(store.databasePath, store.project),
       };
       this.#contexts.set(workspaceId, context);
     }
@@ -104,6 +132,7 @@ export class WorkspaceManager {
    * the current selection for backward-compatible clients.
    */
   select(workspaceId?: string): WorkspaceContext {
+    this.#selections += 1;
     if (workspaceId === undefined) {
       return this.current();
     }
@@ -135,6 +164,9 @@ export function routedRepositories(manager: WorkspaceManager): Repositories {
   return {
     get db() {
       return manager.current().repos.db;
+    },
+    get project() {
+      return manager.current().repos.project;
     },
     get tasks() {
       return manager.current().repos.tasks;

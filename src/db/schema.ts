@@ -1,3 +1,5 @@
+import { PROJECT_SCOPE_MIGRATION } from './project-scope-migration.js';
+
 /**
  * Ordered, append-only list of SQL migrations. The migration runner in
  * `connection.ts` uses `PRAGMA user_version` to track how many have been
@@ -231,4 +233,6 @@ export const migrations: readonly string[] = [
   CREATE INDEX idx_agent_messages_pending_recipient
     ON agent_messages(recipient_agent_id, status, created_at, message_id);
   `,
+  // 012 — tasks are unique per project, so one store can hold several.
+  PROJECT_SCOPE_MIGRATION,
 ];

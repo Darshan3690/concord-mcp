@@ -1,4 +1,5 @@
 import { openDatabase, type ConcordDatabase } from './connection.js';
+import { LOCAL_PROJECT } from './project-scope-migration.js';
 import {
   createAgentEndpointRepository,
   type AgentEndpointRepository,
@@ -23,7 +24,9 @@ import { createTaskRepository, type TaskRepository } from './repositories/tasks.
 
 export type { ConcordDatabase } from './connection.js';
 export { openDatabase } from './connection.js';
+export { LOCAL_PROJECT } from './project-scope-migration.js';
 export type { NewTask, TaskRepository } from './repositories/tasks.js';
+export { createTaskRepository } from './repositories/tasks.js';
 export type { NewHandoff, HandoffRepository } from './repositories/handoffs.js';
 export type { NewReview, ReviewRepository } from './repositories/reviews.js';
 export type { NewTaskUpdate, TaskUpdateRepository } from './repositories/task-updates.js';
@@ -61,6 +64,8 @@ export type {
 /** The full set of Concord repositories bound to one database. */
 export interface Repositories {
   db: ConcordDatabase;
+  /** The project task-scoped repositories see. */
+  project: string;
   tasks: TaskRepository;
   handoffs: HandoffRepository;
   reviews: ReviewRepository;
@@ -72,23 +77,27 @@ export interface Repositories {
   ownershipEvents: OwnershipEventRepository;
 }
 
-/** Bind all repositories to an already-open database. */
-export function createRepositories(db: ConcordDatabase): Repositories {
+/** Bind all repositories to an open database; task-scoped ones see only `project`. */
+export function createRepositories(
+  db: ConcordDatabase,
+  project: string = LOCAL_PROJECT,
+): Repositories {
   return {
     db,
-    tasks: createTaskRepository(db),
-    handoffs: createHandoffRepository(db),
-    reviews: createReviewRepository(db),
-    taskUpdates: createTaskUpdateRepository(db),
-    events: createEventRepository(db),
+    project,
+    tasks: createTaskRepository(db, project),
+    handoffs: createHandoffRepository(db, project),
+    reviews: createReviewRepository(db, project),
+    taskUpdates: createTaskUpdateRepository(db, project),
+    events: createEventRepository(db, project),
     agents: createAgentRepository(db),
     agentEndpoints: createAgentEndpointRepository(db),
-    agentMessages: createAgentMessageRepository(db),
-    ownershipEvents: createOwnershipEventRepository(db),
+    agentMessages: createAgentMessageRepository(db, project),
+    ownershipEvents: createOwnershipEventRepository(db, project),
   };
 }
 
-/** Open the database at `filename` and bind all repositories. */
-export function openRepositories(filename: string): Repositories {
-  return createRepositories(openDatabase(filename));
+/** Open the database at `filename` and bind all repositories to `project`. */
+export function openRepositories(filename: string, project: string = LOCAL_PROJECT): Repositories {
+  return createRepositories(openDatabase(filename), project);
 }

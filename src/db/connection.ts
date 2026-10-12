@@ -26,11 +26,20 @@ export function openDatabase(filename: string): ConcordDatabase {
   // sharing one workspace database. Wait for brief writers instead of making
   // a live inbox watcher exit on the first SQLITE_BUSY response.
   db.pragma('busy_timeout = 5000');
-  db.pragma('foreign_keys = ON');
+  // Enforcement stays off while migrating: rebuilding a referenced table is
+  // only possible without it, and SQLite ignores the pragma inside a transaction.
+  db.pragma('foreign_keys = OFF');
   runMigrations(db);
+  db.pragma('foreign_keys = ON');
   return db;
 }
 
+const foreignKeyViolationsSchema = z.array(z.unknown());
+
+/**
+ * Apply each outstanding migration atomically with its version bump, so an
+ * interrupted upgrade leaves the previous schema rather than half of the next.
+ */
 function runMigrations(db: ConcordDatabase): void {
   const applied = readUserVersion(db);
   for (let index = applied; index < migrations.length; index += 1) {
@@ -38,8 +47,14 @@ function runMigrations(db: ConcordDatabase): void {
     if (migration === undefined) {
       continue;
     }
-    db.exec(migration);
-    db.pragma(`user_version = ${String(index + 1)}`);
+    db.transaction(() => {
+      db.exec(migration);
+      const violations = foreignKeyViolationsSchema.parse(db.pragma('foreign_key_check'));
+      if (violations.length > 0) {
+        throw new Error(`Migration ${String(index + 1)} left foreign-key violations.`);
+      }
+      db.pragma(`user_version = ${String(index + 1)}`);
+    })();
   }
 }
 

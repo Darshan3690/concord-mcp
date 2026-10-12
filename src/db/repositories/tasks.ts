@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { ConcordDatabase } from '../connection.js';
+import { LOCAL_PROJECT } from '../project-scope-migration.js';
 import { parseTaskRow, serializeStringArray, type TaskRecord, type TaskStatus } from '../rows.js';
 
 /** Input for creating a task claim. Optional string fields are explicit `null`. */
@@ -54,35 +55,41 @@ export interface TaskTransition {
 
 const rawListSchema = z.array(z.unknown());
 
-export function createTaskRepository(db: ConcordDatabase): TaskRepository {
+/** Tasks of one project: every read and write is confined to `project`. */
+export function createTaskRepository(
+  db: ConcordDatabase,
+  project: string = LOCAL_PROJECT,
+): TaskRepository {
   const insertStmt = db.prepare(`
     INSERT INTO tasks (
-      task_id, title, owner, agent, branch, worktree,
+      project, task_id, title, owner, agent, branch, worktree,
       expected_files, modules, domains, risk_tags, notes, status,
       parent_task_id, agent_id, version, assigned_agent_id, lease_expires_at,
       created_at, updated_at
     ) VALUES (
-      @task_id, @title, @owner, @agent, @branch, @worktree,
+      @project, @task_id, @title, @owner, @agent, @branch, @worktree,
       @expected_files, @modules, @domains, @risk_tags, @notes, @status,
       @parent_task_id, @agent_id, @version, @assigned_agent_id, @lease_expires_at,
       @created_at, @updated_at
     )
   `);
-  const getStmt = db.prepare('SELECT * FROM tasks WHERE task_id = ?');
-  const listStmt = db.prepare('SELECT * FROM tasks ORDER BY created_at ASC, task_id ASC');
+  const getStmt = db.prepare('SELECT * FROM tasks WHERE project = ? AND task_id = ?');
+  const listStmt = db.prepare(
+    'SELECT * FROM tasks WHERE project = ? ORDER BY created_at ASC, task_id ASC',
+  );
   const touchActivityStmt = db.prepare(
-    'UPDATE tasks SET updated_at = @updated_at WHERE task_id = @task_id',
+    'UPDATE tasks SET updated_at = @updated_at WHERE project = @project AND task_id = @task_id',
   );
   const updateStatusStmt = db.prepare(
     `UPDATE tasks
      SET status = @status, version = version + 1, updated_at = @updated_at
-     WHERE task_id = @task_id`,
+     WHERE project = @project AND task_id = @task_id`,
   );
   const updateScopeStmt = db.prepare(
     `UPDATE tasks SET expected_files = @expected_files, modules = @modules,
        domains = @domains, risk_tags = @risk_tags,
        version = version + 1, updated_at = @updated_at
-     WHERE task_id = @task_id`,
+     WHERE project = @project AND task_id = @task_id`,
   );
   const transitionStmt = db.prepare(
     `UPDATE tasks
@@ -92,11 +99,11 @@ export function createTaskRepository(db: ConcordDatabase): TaskRepository {
          lease_expires_at = @lease_expires_at,
          version = version + 1,
          updated_at = @updated_at
-     WHERE task_id = @task_id AND version = @expected_version`,
+     WHERE project = @project AND task_id = @task_id AND version = @expected_version`,
   );
 
   function get(taskId: string): TaskRecord | undefined {
-    const raw: unknown = getStmt.get(taskId);
+    const raw: unknown = getStmt.get(project, taskId);
     if (raw === undefined) {
       return undefined;
     }
@@ -107,6 +114,7 @@ export function createTaskRepository(db: ConcordDatabase): TaskRepository {
     create(task) {
       const now = new Date().toISOString();
       insertStmt.run({
+        project,
         task_id: task.taskId,
         title: task.title,
         owner: task.owner,
@@ -135,7 +143,7 @@ export function createTaskRepository(db: ConcordDatabase): TaskRepository {
     },
     get,
     list() {
-      const raw: unknown = listStmt.all();
+      const raw: unknown = listStmt.all(project);
       return rawListSchema.parse(raw).map(parseTaskRow);
     },
     listByStatuses(statuses) {
@@ -143,21 +151,28 @@ export function createTaskRepository(db: ConcordDatabase): TaskRepository {
       const placeholders = statuses.map(() => '?').join(', ');
       const raw: unknown = db
         .prepare(
-          `SELECT * FROM tasks WHERE status IN (${placeholders}) ORDER BY created_at ASC, task_id ASC`,
+          `SELECT * FROM tasks WHERE project = ? AND status IN (${placeholders})
+           ORDER BY created_at ASC, task_id ASC`,
         )
-        .all(...statuses);
+        .all(project, ...statuses);
       return rawListSchema.parse(raw).map(parseTaskRow);
     },
     touchActivity(taskId) {
-      touchActivityStmt.run({ task_id: taskId, updated_at: new Date().toISOString() });
+      touchActivityStmt.run({ project, task_id: taskId, updated_at: new Date().toISOString() });
       return get(taskId);
     },
     updateStatus(taskId, status) {
-      updateStatusStmt.run({ task_id: taskId, status, updated_at: new Date().toISOString() });
+      updateStatusStmt.run({
+        project,
+        task_id: taskId,
+        status,
+        updated_at: new Date().toISOString(),
+      });
       return get(taskId);
     },
     updateScope(taskId, scope) {
       updateScopeStmt.run({
+        project,
         task_id: taskId,
         expected_files: serializeStringArray(scope.expectedFiles),
         modules: serializeStringArray(scope.modules),
@@ -169,6 +184,7 @@ export function createTaskRepository(db: ConcordDatabase): TaskRepository {
     },
     transition(input) {
       const info = transitionStmt.run({
+        project,
         task_id: input.taskId,
         expected_version: input.expectedVersion,
         status: input.status,

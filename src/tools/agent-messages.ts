@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
-import type {
-  AgentEndpointRecord,
-  AgentMessageErrorCode,
-  AgentMessageRecord,
-  Repositories,
-  TaskRecord,
+import {
+  createTaskRepository,
+  type AgentEndpointRecord,
+  type AgentMessageErrorCode,
+  type AgentMessageRecord,
+  type Repositories,
+  type TaskRecord,
 } from '../db/index.js';
 import {
   deliveryOutlook,
@@ -150,11 +151,15 @@ export function handleSendAgentMessage(
       `Agent ${recipientAgentId} is not registered in this workspace.`,
     );
   }
-  if (input.taskId !== undefined && repos.tasks.get(input.taskId) === undefined) {
+  // Agents span a shared store, so a reply's task is in the prompt's project, not always ours.
+  const taskProject = parent?.project ?? repos.project;
+  const tasks =
+    taskProject === repos.project ? repos.tasks : createTaskRepository(repos.db, taskProject);
+  if (input.taskId !== undefined && tasks.get(input.taskId) === undefined) {
     throw new Error(`Task ${input.taskId} does not exist.`);
   }
   const contextualTaskId = input.taskId ?? parent?.taskId ?? null;
-  const task = contextualTaskId === null ? undefined : repos.tasks.get(contextualTaskId);
+  const task = contextualTaskId === null ? undefined : tasks.get(contextualTaskId);
 
   const replay = repos.agentMessages.getByIdempotency(input.agentId, input.idempotencyKey);
   let message: AgentMessageRecord;
@@ -195,6 +200,7 @@ export function handleSendAgentMessage(
   } else {
     message = repos.agentMessages.create({
       messageId: randomUUID(),
+      project: taskProject,
       taskId: contextualTaskId,
       senderAgentId: input.agentId,
       recipientAgentId,
@@ -228,7 +234,7 @@ export function handleSendAgentMessage(
   }
   repos.agents.touch(input.agentId);
   const activityTask =
-    !idempotentReplay && task !== undefined ? repos.tasks.touchActivity(task.taskId) : task;
+    !idempotentReplay && task !== undefined ? tasks.touchActivity(task.taskId) : task;
   return {
     message,
     idempotentReplay,

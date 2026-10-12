@@ -45,7 +45,6 @@ function instructionStatus(repoRoot: string): string {
 
 /** Produce a human-readable diagnostics report for the workspace. */
 export function buildDoctorReport(ctx: CliContext, env: NodeJS.ProcessEnv = process.env): string {
-  const dbPath = join(ctx.concordPath, 'concord.db');
   const schemaVersion = z.number().parse(ctx.repos.db.pragma('user_version', { simple: true }));
   const tasks = ctx.repos.tasks.list();
   const events = ctx.repos.events.list();
@@ -59,8 +58,9 @@ export function buildDoctorReport(ctx: CliContext, env: NodeJS.ProcessEnv = proc
     '',
     'Workspace',
     `  workspace id ${ctx.workspaceId}`,
+    `  store        ${ctx.store.kind}${ctx.store.kind === 'global' ? ` (project ${ctx.store.project})` : ''}`,
     `  .concord/    ${existsSync(ctx.concordPath) ? 'ok' : 'missing'}  ->  ${ctx.concordPath}`,
-    `  concord.db   ${existsSync(dbPath) ? 'ok' : 'missing'} (schema v${String(schemaVersion)}, expected v${String(migrations.length)})`,
+    `  concord.db   ${existsSync(ctx.store.databasePath) ? 'ok' : 'missing'} (schema v${String(schemaVersion)}, expected v${String(migrations.length)})`,
     `  repo root    ${ctx.repoRoot}`,
     `  instructions ${instructions}`,
     `  endpoints    ${String(connectedEndpoints.length)} reachable / ${String(endpoints.length)} registered`,

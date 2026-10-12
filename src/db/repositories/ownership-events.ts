@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { ConcordDatabase } from '../connection.js';
+import { LOCAL_PROJECT } from '../project-scope-migration.js';
 import { parseOwnershipEventRow, type OwnershipEventRecord, type TaskStatus } from '../rows.js';
 
 export interface NewOwnershipEvent {
@@ -23,24 +24,28 @@ export interface OwnershipEventRepository {
 
 const rawListSchema = z.array(z.unknown());
 
-export function createOwnershipEventRepository(db: ConcordDatabase): OwnershipEventRepository {
+export function createOwnershipEventRepository(
+  db: ConcordDatabase,
+  project: string = LOCAL_PROJECT,
+): OwnershipEventRepository {
   const insertStmt = db.prepare(`
     INSERT INTO task_ownership_events (
-      task_id, transition, actor_agent_id, from_agent_id, to_agent_id,
+      project, task_id, transition, actor_agent_id, from_agent_id, to_agent_id,
       from_status, to_status, from_version, to_version, reason, created_at
     ) VALUES (
-      @task_id, @transition, @actor_agent_id, @from_agent_id, @to_agent_id,
+      @project, @task_id, @transition, @actor_agent_id, @from_agent_id, @to_agent_id,
       @from_status, @to_status, @from_version, @to_version, @reason, @created_at
     )
   `);
   const getStmt = db.prepare('SELECT * FROM task_ownership_events WHERE id = ?');
   const listStmt = db.prepare(
-    'SELECT * FROM task_ownership_events WHERE task_id = ? ORDER BY id ASC',
+    'SELECT * FROM task_ownership_events WHERE project = ? AND task_id = ? ORDER BY id ASC',
   );
 
   return {
     record(event) {
       const info = insertStmt.run({
+        project,
         task_id: event.taskId,
         transition: event.transition,
         actor_agent_id: event.actorAgentId,
@@ -60,7 +65,7 @@ export function createOwnershipEventRepository(db: ConcordDatabase): OwnershipEv
       return parseOwnershipEventRow(raw);
     },
     listByTask(taskId) {
-      const raw: unknown = listStmt.all(taskId);
+      const raw: unknown = listStmt.all(project, taskId);
       return rawListSchema.parse(raw).map(parseOwnershipEventRow);
     },
   };

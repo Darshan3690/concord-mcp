@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { writeArtifacts } from './artifacts/index.js';
 import { cloudSessionFor, connectCloud, createCloudProxyServer } from './cloud/proxy.js';
+import { readLink } from './cloud/settings.js';
 import { startBackgroundUpdateCheck } from './update-notifier.js';
 import { resolveCheckoutRoot, resolveRepoRoot } from './config/paths.js';
 import { resolveIdentity } from './domain/identity.js';
@@ -11,6 +12,7 @@ import { ensureAgentRegistered } from './tools/register-agent.js';
 import { createTelemetryClient } from './telemetry/client.js';
 import { TelemetryTransport } from './telemetry/transport.js';
 import { VERSION } from './version.js';
+import { hasExplicitRepoRoot, joinClientRoot } from './workspaces/client-roots.js';
 import { WorkspaceManager } from './workspaces/manager.js';
 
 async function main(): Promise<void> {
@@ -41,7 +43,7 @@ async function main(): Promise<void> {
   const updateCheck = startBackgroundUpdateCheck(VERSION, process.env);
   const telemetry = createTelemetryClient({
     surface: 'mcp',
-    workspaceRoot: () => workspaceManager.current().repoRoot,
+    workspaceRoot: () => workspaceManager.activeRoot,
     recordSessionStarted: true,
   });
   const server = createServer(workspaceManager.current().repos, {
@@ -55,6 +57,23 @@ async function main(): Promise<void> {
       }
     },
   });
+  if (!hasExplicitRepoRoot(process.env)) {
+    // Nothing names the repository, so this server may have been started far
+    // from it; ask the client which folder it has open.
+    server.server.oninitialized = () => {
+      joinClientRoot(server.server, workspaceManager, {
+        isCloudLinked: (root) => readLink(root) !== undefined,
+      })
+        .then((joined) => {
+          if (joined !== undefined && identity !== undefined) {
+            ensureAgentRegistered(workspaceManager.current().repos, identity, joined.repoRoot);
+          }
+        })
+        .catch(() => {
+          // The working directory stays the workspace, as before.
+        });
+    };
+  }
   const stdio = new StdioServerTransport();
   const transport = telemetry === undefined ? stdio : new TelemetryTransport(stdio, telemetry);
   process.once('beforeExit', () => {

@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Signed in, Concord Cloud is the default.** After `concord cloud login`, a
+  repository works through Concord Cloud as its git remote's project without
+  `concord cloud link`. A session outside any repository that names its folder
+  (Claude Code) joins the cloud's `general` workspace, where agents that belong
+  to no repository can talk. `concord cloud unlink` now keeps a repository local
+  even while signed in, and `concord cloud status` says which applies and why.
+  These stay local as before: a repository that already holds local Concord
+  state (`concord cloud link` moves it on purpose), one with no remote, and a
+  user-level server that learns its folder from MCP roots.
+
 ## [0.13.0] - 2026-10-11
 
 ### Added

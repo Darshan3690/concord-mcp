@@ -5,7 +5,7 @@ export type SelectWorkspace = (workspaceId?: string) => WorkspaceContext;
 export function selectToolWorkspace(
   selectWorkspace: SelectWorkspace | undefined,
   workspaceId: string | undefined,
-): WorkspaceIdentity | undefined {
+): WorkspaceContext | undefined {
   return selectWorkspace?.(workspaceId);
 }
 

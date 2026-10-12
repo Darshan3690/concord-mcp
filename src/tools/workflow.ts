@@ -730,18 +730,21 @@ export function registerWorkflowTools(
     },
     async (args) => {
       const workspace = selectToolWorkspace(selectWorkspace, args.workspace_id);
+      // Delivery awaits, and the client's folder may become the active workspace meanwhile:
+      // the whole call stays with the workspace it started in.
+      const callRepos = workspace?.repos ?? repos;
       const telemetryWorkspaceRoot = workspace?.repoRoot;
       const messageTaskId =
         args.task_id ??
         (args.operation === 'reply' && args.reply_to_message_id !== undefined
-          ? repos.agentMessages.get(args.reply_to_message_id)?.taskId
+          ? callRepos.agentMessages.get(args.reply_to_message_id)?.taskId
           : undefined);
       const messageTaskFlowId =
         messageTaskId === undefined || messageTaskId === null
           ? null
           : (taskFlowId(messageTaskId) ?? null);
       try {
-        const result = await handleUpdateWork(repos, withActor(args), dispatcher);
+        const result = await handleUpdateWork(callRepos, withActor(args), dispatcher);
         onWrite?.();
         if ('update' in result) {
           return withSessionAdvisories({

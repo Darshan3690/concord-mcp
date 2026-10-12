@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -11,7 +14,8 @@ import { workspaceStatus } from '../../src/cli/commands/inbox.js';
 import { workspaceIdForRoot } from '../../src/config/paths.js';
 import { writeUserConfig } from '../../src/config/user-config.js';
 import { hasExplicitRepoRoot, joinClientRoot } from '../../src/workspaces/client-roots.js';
-import { WorkspaceManager } from '../../src/workspaces/manager.js';
+import { registerWorkflowTools } from '../../src/tools/workflow.js';
+import { WorkspaceManager, routedRepositories } from '../../src/workspaces/manager.js';
 
 function dir(label: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), `concord-${label}-`)));
@@ -74,6 +78,72 @@ describe('joinClientRoot', () => {
     answer({ roots: [{ uri: pathToFileURL(open).href }] });
     expect(await rejoining).toBeUndefined();
     expect(manager.current().repoRoot).toBe(named);
+  });
+
+  it('keeps a live delivery in the workspace it started in when the folder joins meanwhile', async () => {
+    const launched = repoDir('launched');
+    const open = repoDir('open');
+    const manager = new WorkspaceManager(launched);
+    const repos = manager.current().repos;
+    for (const agentId of ['codex:sender', 'codex:target']) {
+      repos.agents.upsert({
+        agentId,
+        kind: 'codex',
+        owner: null,
+        model: null,
+        pid: null,
+        cwd: null,
+        worktree: null,
+        branch: null,
+        summary: null,
+        status: 'active',
+      });
+    }
+    repos.agentEndpoints.upsert({
+      endpointId: 'e1',
+      agentId: 'codex:target',
+      provider: 'codex',
+      transport: 'local-ipc',
+      capabilities: ['local-ipc', 'steer'],
+      address: 'ipc',
+      credentialHash: 'h',
+      status: 'connected',
+      expiresAt: null,
+    });
+    const server = new McpServer({ name: 'test', version: '0' });
+    const deliver = () => {
+      manager.join(open);
+      return Promise.resolve({ provider: 'codex', delivery: 'steer' as const });
+    };
+    registerWorkflowTools(
+      server,
+      routedRepositories(manager),
+      undefined,
+      (id) => manager.select(id),
+      undefined,
+      undefined,
+      { deliver },
+    );
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    const mcp = new Client({ name: 'test', version: '0' });
+    await Promise.all([mcp.connect(clientSide), server.connect(serverSide)]);
+
+    const sent = await mcp.callTool({
+      name: 'update_work',
+      arguments: {
+        operation: 'prompt',
+        agent_id: 'codex:sender',
+        to_agent_id: 'codex:target',
+        content: 'hi',
+        idempotency_key: 'k1',
+      },
+    });
+
+    expect(sent.isError).not.toBe(true);
+    expect(repos.agentMessages.listByAgent('codex:target').map((m) => m.status)).toEqual([
+      'delivered',
+    ]);
+    await mcp.close();
   });
 
   it('refuses a folder linked to Concord Cloud instead of serving it locally', async () => {

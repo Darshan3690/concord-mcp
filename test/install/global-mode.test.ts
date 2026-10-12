@@ -147,6 +147,8 @@ describe('removeBlock', () => {
     for (const original of ['# Rules\n', 'Line with a break  \n', 'A\n\n\nB\n', '']) {
       expect(removeBlock(upsertBlock(original, 'block'))).toBe(original);
     }
+    // `abc` and `abc\n` get the same block, so removal cannot tell them apart.
+    expect(removeBlock(upsertBlock('abc', 'block'))).toBe('abc\n');
     const edited = `${upsertBlock('A\n', 'block')}\nAdded later  \n`;
     expect(removeBlock(edited)).toBe('A\n\nAdded later  \n');
   });

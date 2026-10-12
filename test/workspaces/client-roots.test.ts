@@ -52,9 +52,10 @@ describe('joinClientRoot', () => {
     expect(manager.current().repoRoot).toBe(launched);
   });
 
-  it('keeps a workspace a tool chose while the roots answer was on its way', async () => {
+  it('keeps a workspace a tool named while the roots answer was on its way', async () => {
     const launched = dir('launched');
     const open = repoDir('open');
+    const named = repoDir('named');
     const manager = new WorkspaceManager(launched);
     let answer: (roots: { roots: { uri: string }[] }) => void = () => undefined;
     const slow = {
@@ -64,10 +65,15 @@ describe('joinClientRoot', () => {
 
     const joining = joinClientRoot(slow, manager);
     manager.select();
-    answer({ roots: [{ uri: pathToFileURL(open).href }] });
-
-    expect(await joining).toBeUndefined();
     expect(manager.current().repoRoot).toBe(launched);
+    answer({ roots: [{ uri: pathToFileURL(open).href }] });
+    expect((await joining)?.repoRoot).toBe(open);
+
+    const rejoining = joinClientRoot(slow, manager);
+    manager.select(workspaceIdForRoot(named));
+    answer({ roots: [{ uri: pathToFileURL(open).href }] });
+    expect(await rejoining).toBeUndefined();
+    expect(manager.current().repoRoot).toBe(named);
   });
 
   it('refuses a folder linked to Concord Cloud instead of serving it locally', async () => {

@@ -170,6 +170,14 @@ describe('upsertGrokMcpServer', () => {
     expect(updated).not.toContain('/old');
     expect(updated).toContain('[other]');
   });
+
+  it('refuses an inline mcp_servers table, which TOML cannot add a table to', () => {
+    expect(() => upsertGrokMcpServer('mcp_servers = { other = { command = "x" } }\n')).toThrow(
+      McpConfigParseError,
+    );
+    const dotted = upsertGrokMcpServer('mcp_servers.other.command = "x"\n');
+    expect(dotted).toContain('[mcp_servers.concord]');
+  });
 });
 
 describe('removeGlobalCursorConcord', () => {

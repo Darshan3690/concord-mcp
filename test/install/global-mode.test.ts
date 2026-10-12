@@ -128,6 +128,20 @@ describe('registrations the user made', () => {
   });
 });
 
+describe('a Grok config Concord cannot extend', () => {
+  it('is left as it is, with a warning', () => {
+    const env = machine(['grok']);
+    const grok = join(env.HOME, '.grok', 'config.toml');
+    mkdirSync(join(env.HOME, '.grok'));
+    writeFileSync(grok, 'mcp_servers = { other = { command = "other" } }\n');
+    const report = applyGlobalMode(env, true);
+    expect(read(grok)).toBe('mcp_servers = { other = { command = "other" } }\n');
+    expect(report.warnings).toHaveLength(1);
+    expect(report.warnings.join()).toMatch(/inline table/u);
+    expect(report.registrations).toEqual([]);
+  });
+});
+
 describe('removeBlock', () => {
   it('restores the text around the block exactly', () => {
     for (const original of ['# Rules\n', 'Line with a break  \n', 'A\n\n\nB\n', '']) {

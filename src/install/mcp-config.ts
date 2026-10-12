@@ -25,8 +25,11 @@ const looseObjectSchema = z.record(z.string(), z.unknown());
  * and leaves the file untouched rather than overwriting hand-written config.
  */
 export class McpConfigParseError extends Error {
-  constructor(readonly relPath: string) {
-    super(`${relPath} is not valid JSON — fix or remove it, then re-run.`);
+  constructor(
+    readonly relPath: string,
+    problem = 'is not valid JSON',
+  ) {
+    super(`${relPath} ${problem} — fix or remove it, then re-run.`);
     this.name = 'McpConfigParseError';
   }
 }
@@ -75,22 +78,25 @@ function tomlKeyPath(raw: string): string {
 
 const GROK_CONCORD_KEY = /^mcp_servers\.concord(?:\.|$)/u;
 
-/** Whether Grok TOML registers Concord in any spelling: a table (quoted or not), dotted keys, or inline. */
-export function hasGrokMcpServer(existing: string): boolean {
+/** Each key path Grok TOML assigns or opens as a table, spacing and quotes removed. */
+function* grokKeyPaths(existing: string): Generator<{ path: string; header: boolean }> {
   let table = '';
   for (const line of existing.split(/\r?\n/u)) {
     const header = /^\s*\[([^\]]+)\]/u.exec(line)?.[1];
     if (header !== undefined) {
       table = tomlKeyPath(header);
-      if (GROK_CONCORD_KEY.test(table)) return true;
+      yield { path: table, header: true };
       continue;
     }
     const key = /^\s*([^=#]+?)\s*=/u.exec(line)?.[1];
-    if (key === undefined) continue;
-    const path = tomlKeyPath(table === '' ? key : `${table}.${key}`);
-    if (GROK_CONCORD_KEY.test(path)) return true;
+    if (key !== undefined)
+      yield { path: tomlKeyPath(table === '' ? key : `${table}.${key}`), header: false };
   }
-  return false;
+}
+
+/** Whether Grok TOML registers Concord in any spelling: a table (quoted or not), dotted keys, or inline. */
+export function hasGrokMcpServer(existing: string): boolean {
+  return [...grokKeyPaths(existing)].some(({ path }) => GROK_CONCORD_KEY.test(path));
 }
 
 /** Remove Concord's entry from an `mcpServers` config string, keeping the rest. */
@@ -139,6 +145,13 @@ export function upsertGeminiSettings(existing: string | undefined, repoRoot?: st
  */
 export function upsertGrokMcpServer(existing: string | undefined, repoRoot?: string): string {
   const base = removeGrokMcpServer(existing ?? '');
+  // TOML cannot add a `[mcp_servers.concord]` table to an inline `mcp_servers = { ... }`.
+  if ([...grokKeyPaths(base)].some(({ path, header }) => !header && path === 'mcp_servers')) {
+    throw new McpConfigParseError(
+      GROK_CONFIG_PATH,
+      'sets mcp_servers as an inline table, which Concord cannot add to',
+    );
+  }
   const block = [
     GROK_FENCE_START,
     '[mcp_servers.concord]',

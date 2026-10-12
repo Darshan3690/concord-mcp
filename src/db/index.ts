@@ -26,6 +26,7 @@ export type { ConcordDatabase } from './connection.js';
 export { openDatabase } from './connection.js';
 export { LOCAL_PROJECT } from './project-scope-migration.js';
 export type { NewTask, TaskRepository } from './repositories/tasks.js';
+export { createTaskRepository } from './repositories/tasks.js';
 export type { NewHandoff, HandoffRepository } from './repositories/handoffs.js';
 export type { NewReview, ReviewRepository } from './repositories/reviews.js';
 export type { NewTaskUpdate, TaskUpdateRepository } from './repositories/task-updates.js';
@@ -63,6 +64,8 @@ export type {
 /** The full set of Concord repositories bound to one database. */
 export interface Repositories {
   db: ConcordDatabase;
+  /** The project task-scoped repositories see. */
+  project: string;
   tasks: TaskRepository;
   handoffs: HandoffRepository;
   reviews: ReviewRepository;
@@ -81,6 +84,7 @@ export function createRepositories(
 ): Repositories {
   return {
     db,
+    project,
     tasks: createTaskRepository(db, project),
     handoffs: createHandoffRepository(db, project),
     reviews: createReviewRepository(db, project),

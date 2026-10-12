@@ -13,6 +13,8 @@ import {
 
 export interface NewAgentMessage {
   messageId: string;
+  /** The project `taskId` belongs to, when not this repository's (a reply's). */
+  project?: string | undefined;
   taskId: string | null;
   senderAgentId: string;
   recipientAgentId: string;
@@ -148,7 +150,7 @@ export function createAgentMessageRepository(
     create(message) {
       insertStmt.run({
         message_id: message.messageId,
-        project,
+        project: message.project ?? project,
         task_id: message.taskId,
         sender_agent_id: message.senderAgentId,
         recipient_agent_id: message.recipientAgentId,

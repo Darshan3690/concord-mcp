@@ -141,6 +141,9 @@ export function routedRepositories(manager: WorkspaceManager): Repositories {
     get db() {
       return manager.current().repos.db;
     },
+    get project() {
+      return manager.current().repos.project;
+    },
     get tasks() {
       return manager.current().repos.tasks;
     },

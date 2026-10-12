@@ -570,6 +570,8 @@ const agentMessageErrorCodeSchema = z.enum(agentMessageErrorCodeValues);
 
 export interface AgentMessageRecord {
   messageId: string;
+  /** The project `taskId` belongs to; messages themselves span the store. */
+  project: string;
   taskId: string | null;
   senderAgentId: string;
   recipientAgentId: string;
@@ -590,6 +592,7 @@ export interface AgentMessageRecord {
 
 const agentMessageDbRowSchema = z.object({
   message_id: z.string(),
+  project: z.string(),
   task_id: z.string().nullable(),
   sender_agent_id: z.string(),
   recipient_agent_id: z.string(),
@@ -612,6 +615,7 @@ export function parseAgentMessageRow(raw: unknown): AgentMessageRecord {
   const row = agentMessageDbRowSchema.parse(raw);
   return {
     messageId: row.message_id,
+    project: row.project,
     taskId: row.task_id,
     senderAgentId: row.sender_agent_id,
     recipientAgentId: row.recipient_agent_id,

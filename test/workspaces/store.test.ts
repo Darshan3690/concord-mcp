@@ -12,9 +12,10 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { readUserConfig, writeUserConfig } from '../../src/config/user-config.js';
-import { openRepositories } from '../../src/db/index.js';
-import { workspaceExists } from '../../src/cli/commands/inbox.js';
+import { createRepositories, openDatabase, openRepositories } from '../../src/db/index.js';
+import { registerPullEndpoint, workspaceExists } from '../../src/cli/commands/inbox.js';
 import { openContext } from '../../src/cli/context.js';
+import { handleSendAgentMessage } from '../../src/tools/agent-messages.js';
 import { WorkspaceManager } from '../../src/workspaces/manager.js';
 import { GENERAL_PROJECT, artifactDirName, resolveStore } from '../../src/workspaces/store.js';
 
@@ -87,6 +88,42 @@ describe('resolveStore', () => {
     const root = repoDir('set-up');
     openRepositories(join(root, '.concord', 'concord.db')).db.close();
     expect(resolveStore(root, globalEnv(), noRemote).kind).toBe('local');
+  });
+});
+
+describe('messages across projects', () => {
+  it("keep a reply on the prompt's task, not the replier's task of the same id", () => {
+    const db = openDatabase(':memory:');
+    const first = createRepositories(db, 'github.com/org/a');
+    const second = createRepositories(db, 'github.com/org/b');
+    registerPullEndpoint(first, 'codex:a', 'codex');
+    registerPullEndpoint(first, 'codex:b', 'codex');
+    first.tasks.create({ ...task, title: 'A' });
+
+    for (const [round, secondHasTask] of [false, true].entries()) {
+      if (secondHasTask) second.tasks.create({ ...task, title: 'B' });
+      const prompt = handleSendAgentMessage(first, {
+        operation: 'prompt',
+        agentId: 'codex:a',
+        toAgentId: 'codex:b',
+        taskId: 'TASK-1',
+        content: 'Which schema?',
+        idempotencyKey: `prompt-${String(round)}`,
+      }).message;
+      second.agentMessages.claimPendingForRecipient('codex:b', 'codex');
+      const { message: reply, task: replyTask } = handleSendAgentMessage(second, {
+        operation: 'reply',
+        agentId: 'codex:b',
+        replyToMessageId: prompt.messageId,
+        content: 'The new one.',
+        idempotencyKey: `reply-${String(round)}`,
+      });
+
+      expect(reply).toMatchObject({ project: 'github.com/org/a', taskId: 'TASK-1' });
+      expect(replyTask?.title).toBe('A');
+      expect(first.agentMessages.listByTask('TASK-1')).toContainEqual(reply);
+      expect(second.agentMessages.listByTask('TASK-1')).toEqual([]);
+    }
   });
 });
 

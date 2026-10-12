@@ -177,6 +177,8 @@ describe('upsertGrokMcpServer', () => {
     );
     const dotted = upsertGrokMcpServer('mcp_servers.other.command = "x"\n');
     expect(dotted).toContain('[mcp_servers.concord]');
+    const afterString = 'prompt = """\n[example]\n"""\nmcp_servers = { other = {} }\n';
+    expect(() => upsertGrokMcpServer(afterString)).toThrow(McpConfigParseError);
   });
 });
 

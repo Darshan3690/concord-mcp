@@ -81,7 +81,15 @@ const GROK_CONCORD_KEY = /^mcp_servers\.concord(?:\.|$)/u;
 /** Each key path Grok TOML assigns or opens as a table, spacing and quotes removed. */
 function* grokKeyPaths(existing: string): Generator<{ path: string; header: boolean }> {
   let table = '';
+  let multiline: string | undefined;
   for (const line of existing.split(/\r?\n/u)) {
+    // A line inside a multi-line string is text, however much it looks like TOML.
+    if (multiline !== undefined) {
+      if (line.includes(multiline)) multiline = undefined;
+      continue;
+    }
+    const quote = /("""|''')/u.exec(line)?.[1];
+    if (quote !== undefined && line.split(quote).length % 2 === 0) multiline = quote;
     const header = /^\s*\[([^\]]+)\]/u.exec(line)?.[1];
     if (header !== undefined) {
       table = tomlKeyPath(header);

@@ -24,25 +24,23 @@ pull.
 
 These are enforced in CI. A PR that violates them will not go green.
 
-1. **PRs stay under 600 LOC** (added + removed, excluding `pnpm-lock.yaml`).
-   Enforced by the `pr-size-check` CI job. If a change grows past this, split it.
-2. **No file over 1000 lines.** Enforced by ESLint `max-lines`. Aim far lower —
+1. **No file over 1000 lines.** Enforced by ESLint `max-lines`. Aim far lower —
    most files should be under ~300 lines. Extract modules early.
-3. **Strict types. Never `any`.** `strict` + `noUncheckedIndexedAccess` +
+2. **Strict types. Never `any`.** `strict` + `noUncheckedIndexedAccess` +
    `exactOptionalPropertyTypes` in tsconfig; `strictTypeChecked` in ESLint
    (`no-explicit-any`, all `no-unsafe-*`, `no-non-null-assertion`).
-4. **`unknown` only at boundaries.** `unknown` is allowed **only** as the
+3. **`unknown` only at boundaries.** `unknown` is allowed **only** as the
    immediate input to a Zod `.parse()` / `.safeParse()` that narrows it. Never
    store, return, or pass around `unknown`.
-5. **Never typecast.** `as` assertions are forbidden (`consistent-type-assertions:
+4. **Never typecast.** `as` assertions are forbidden (`consistent-type-assertions:
 never`); only `as const` is allowed. Narrow types with Zod parsing, type
    guards, or control flow — not casts.
-6. **Clear naming.** camelCase values/functions, PascalCase types, UPPER_CASE
+5. **Clear naming.** camelCase values/functions, PascalCase types, UPPER_CASE
    module constants. kebab-case filenames. Enforced by `naming-convention`.
-7. **Modular, layered structure** (see below). Dependencies point one way:
+6. **Modular, layered structure** (see below). Dependencies point one way:
    `tools` / `cli` → `domain` / `artifacts` → `db` → `config`. Lower layers never
    import higher ones.
-8. **Check before writing.** Search for an existing type, schema, repository, or
+7. **Check before writing.** Search for an existing type, schema, repository, or
    helper before adding a new one. Reuse over duplication.
 
 ## The "never typecast" pattern for DB rows and external JSON
@@ -100,7 +98,7 @@ Run `pnpm lint && pnpm typecheck && pnpm test && pnpm build` before pushing.
 Every change ships as: **new branch → focused commits → PR → squash-merge to
 main**. Branch names: `feat/…`, `fix/…`, `chore/…`, `docs/…`. Commit messages
 use Conventional Commits (`feat:`, `fix:`, `chore:`, `ci:`, `docs:`). One logical
-concern per PR; keep it under 600 LOC.
+concern per PR.
 
 <!-- concord:start -->
 

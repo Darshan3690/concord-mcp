@@ -50,8 +50,8 @@ export function createServer(repos: Repositories, options: ServerOptions = {}): 
   // Register the read surface first so we get the change-notifier, then run it
   // (plus the caller's hook) after every write.
   const notifyWorkStateChanged = registerWorkStateResource(server, selectedRepos, selectWorkspace);
-  const onWrite = (): void => {
-    options.onToolWrite?.(manager?.current());
+  const onWrite = (workspace?: WorkspaceContext): void => {
+    options.onToolWrite?.(workspace ?? manager?.current());
     notifyWorkStateChanged();
   };
   registerWorkflowTools(

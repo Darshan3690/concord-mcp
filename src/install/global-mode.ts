@@ -13,6 +13,7 @@ import {
   CONCORD_SERVER_KEY,
   hasGrokMcpServer,
   hasMcpServer,
+  McpConfigParseError,
   removeGrokMcpServer,
   removeMcpServer,
   upsertGeminiSettings,
@@ -40,7 +41,7 @@ interface UserFile {
   /** Set for an MCP registration, which `--no-mcp` skips. */
   readonly registration?: Registration;
   readonly path: (env: NodeJS.ProcessEnv) => string;
-  readonly install: (existing: string | undefined) => string;
+  readonly install: (existing: string | undefined, path: string) => string;
   readonly uninstall: (existing: string) => string;
 }
 
@@ -88,7 +89,7 @@ const USER_FILES: readonly UserFile[] = [
     executable: 'grok',
     registration: { id: 'grok', present: hasGrokMcpServer },
     path: (env) => join(grokHome(env), 'config.toml'),
-    install: (existing) => upsertGrokMcpServer(existing),
+    install: (existing, path) => upsertGrokMcpServer(existing, undefined, path),
     uninstall: (existing) => {
       const rest = removeGrokMcpServer(existing);
       return rest === '' ? '' : `${rest}\n`;
@@ -121,7 +122,7 @@ function applyFile(
     const existing = exists ? readFileSync(path, 'utf8') : undefined;
     const { registration } = file;
     if (registration !== undefined && !mayChange(registration, enable, existing, owned)) return;
-    const next = enable ? file.install(existing) : file.uninstall(existing ?? '');
+    const next = enable ? file.install(existing, path) : file.uninstall(existing ?? '');
     if (next !== existing) {
       if (next === '') {
         rmSync(path);
@@ -136,7 +137,12 @@ function applyFile(
       else owned.delete(registration.id);
     }
   } catch (error) {
-    report.warnings.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+    // A parse error already names the file it could not change.
+    report.warnings.push(
+      error instanceof McpConfigParseError
+        ? error.message
+        : `${path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

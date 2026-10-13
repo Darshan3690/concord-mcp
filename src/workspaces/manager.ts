@@ -76,7 +76,7 @@ export class WorkspaceManager {
     );
   }
 
-  /** How many times a workspace has been chosen, by a tool call or a join. */
+  /** How many times a workspace has been chosen explicitly: a join, or a tool call naming one. */
   get selections(): number {
     return this.#selections;
   }
@@ -132,10 +132,10 @@ export class WorkspaceManager {
    * the current selection for backward-compatible clients.
    */
   select(workspaceId?: string): WorkspaceContext {
-    this.#selections += 1;
     if (workspaceId === undefined) {
       return this.current();
     }
+    this.#selections += 1;
     const cached = this.#contexts.get(workspaceId);
     if (cached !== undefined) {
       this.#activeWorkspaceId = workspaceId;

@@ -1,4 +1,5 @@
 import {
+  type FSWatcher,
   existsSync,
   mkdirSync,
   watch,
@@ -188,14 +189,27 @@ describe('global mode end to end', () => {
     const root = repoDir('watch');
     const ctx = openContext(root, { ...globalEnv(), CONCORD_REPO_ROOT: root });
     expect(existsSync(ctx.concordPath)).toBe(false);
-    const changed = new Promise<void>((resolve) => {
-      const watcher = watch(watchedDirectory(ctx), () => {
-        watcher.close();
-        resolve();
+    let watcher: FSWatcher | undefined;
+    const changed = new Promise<true>((resolve) => {
+      watcher = watch(watchedDirectory(ctx), () => {
+        resolve(true);
       });
     });
-    ctx.repos.tasks.create(task);
-    await changed;
+    // macOS may report a write to the open WAL file late or never, so keep
+    // writing, checkpointing into the database file, until an event arrives.
+    const deadline = Date.now() + 4_000;
+    let seen = false;
+    try {
+      for (let n = 1; !seen && Date.now() < deadline; n += 1) {
+        ctx.repos.tasks.create({ ...task, taskId: `TASK-${String(n)}` });
+        ctx.repos.db.pragma('wal_checkpoint(TRUNCATE)');
+        const pause = new Promise<false>((resolve) => setTimeout(resolve, 50, false));
+        seen = await Promise.race([changed, pause]);
+      }
+    } finally {
+      watcher?.close();
+    }
+    expect(seen).toBe(true);
   });
 
   it('opens the repository store when asked to, as setup does', () => {

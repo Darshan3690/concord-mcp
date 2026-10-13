@@ -80,6 +80,21 @@ describe('handleClaimWork', () => {
     expect(result.overlaps).toEqual([]);
   });
 
+  it.each(['assigned', 'blocked', 'handoff_offered'] as const)(
+    'flags an overlap with a %s task that still owns the file',
+    (status) => {
+      handleClaimWork(repos, { task_id: 'T1', title: 'a', expected_files: ['src/x.ts'] });
+      repos.tasks.updateStatus('T1', status);
+      const result = handleClaimWork(repos, {
+        task_id: 'T2',
+        title: 'b',
+        expected_files: ['src/x.ts'],
+      });
+      expect(result.overlaps.map((overlap) => overlap.taskId)).toEqual(['T1']);
+      expect(result.overlaps[0]?.kinds).toContain('same_file');
+    },
+  );
+
   it('reports how many active tasks the point-in-time overlap check considered', () => {
     // First claim: nobody else is active, so there is nothing to compare against.
     const first = handleClaimWork(repos, { task_id: 'TASK-1', title: 'Solo' });

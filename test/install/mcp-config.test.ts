@@ -211,6 +211,15 @@ describe('upsertGrokMcpServer', () => {
   });
 });
 
+describe('a server whose quoted name contains a dot', () => {
+  it('is not mistaken for Concord, so its table survives', () => {
+    const other = '[mcp_servers."concord.env"]\ncommand = "other"\n';
+    expect(hasGrokMcpServer(other)).toBe(false);
+    expect(removeGrokMcpServer(other)).toBe(other.trimEnd());
+    expect(upsertGrokMcpServer(other)).toContain('command = "other"');
+  });
+});
+
 describe('removeGlobalCursorConcord', () => {
   it('does not fall back to the real home in an isolated environment', () => {
     expect(removeGlobalCursorConcord({})).toBeUndefined();

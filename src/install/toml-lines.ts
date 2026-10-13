@@ -11,9 +11,32 @@ export interface TomlLine {
   readonly inString: boolean;
 }
 
-/** A TOML key path with spacing and quotes removed: `mcp_servers . "concord"` → `mcp_servers.concord`. */
+/**
+ * A TOML key path in one spelling: `mcp_servers . "concord"` → `mcp_servers.concord`. A part
+ * that is not a bare key stays quoted, so `"concord.env"` remains one part, not two.
+ */
 export function tomlKeyPath(raw: string): string {
-  return raw.replace(/\s+/gu, '').replace(/["']/gu, '');
+  const parts: string[] = [];
+  let part = '';
+  let index = 0;
+  while (index < raw.length) {
+    const char = raw[index];
+    if (char === '"' || char === "'") {
+      const end = singleLineStringEnd(raw, index);
+      part += raw.slice(index + 1, end - 1);
+      index = end;
+      continue;
+    }
+    if (char === '.') {
+      parts.push(part);
+      part = '';
+    } else if (char !== undefined && !/\s/u.test(char)) {
+      part += char;
+    }
+    index += 1;
+  }
+  parts.push(part);
+  return parts.map((key) => (/^[\w-]+$/u.test(key) ? key : JSON.stringify(key))).join('.');
 }
 
 function multilineQuoteAt(text: string, index: number): MultilineQuote | undefined {

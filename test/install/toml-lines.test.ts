@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { inlineTableKeys, tomlLines } from '../../src/install/toml-lines.js';
+import { inlineTableKeys, tomlKeyPath, tomlLines } from '../../src/install/toml-lines.js';
 
 function insideStrings(source: string): string[] {
   return [...tomlLines(source)].filter((line) => line.inString).map((line) => line.text);
@@ -30,5 +30,14 @@ describe('inlineTableKeys', () => {
     ]);
     expect(inlineTableKeys(' { a = "x = 1, y = 2" }')).toEqual(['a']);
     expect(inlineTableKeys(' "{ a = 1 }"')).toEqual([]);
+  });
+});
+
+describe('tomlKeyPath', () => {
+  it('spells a key one way, keeping a quoted dot inside its part', () => {
+    expect(tomlKeyPath(` mcp_servers . "concord" `)).toBe('mcp_servers.concord');
+    expect(tomlKeyPath(`mcp_servers.'concord'.env`)).toBe('mcp_servers.concord.env');
+    expect(tomlKeyPath('mcp_servers."concord.env"')).toBe('mcp_servers."concord.env"');
+    expect(tomlKeyPath('"my server"')).toBe('"my server"');
   });
 });

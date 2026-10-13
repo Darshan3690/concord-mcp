@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -28,6 +29,7 @@ import {
   ensureMachineKey,
   linkPath,
   readLink,
+  readLocalChoice,
   readMachineKey,
   writeLink,
 } from '../../src/cloud/settings.js';
@@ -245,9 +247,52 @@ describe('concord cloud', () => {
     expect(runCloudLink({}, deps)).toContain('github.com/acme/app');
     expect(readLink(repo)).toEqual({ apiUrl: API, projectKey: 'github.com/acme/app' });
 
+    // Signed in, the cloud is the default: unlinking records the choice to stay local.
+    expect(runCloudUnlink(deps)).toContain('stays local');
+    expect(readLink(repo)).toBeUndefined();
+    expect(readLocalChoice(repo)).toBe(true);
+    // A machine's choice, never committed: `.concord/` ignores itself.
+    expect(readFileSync(join(repo, '.concord', '.gitignore'), 'utf8')).toContain('*');
+    expect(runCloudUnlink(deps)).toContain('already stays local');
+    expect(await runCloudStatus(deps)).toContain('is local (`concord cloud unlink`');
+
+    // Linking again replaces the choice.
+    runCloudLink({}, deps);
+    expect(readLocalChoice(repo)).toBe(false);
+
+    // Signed out, unlinking just removes the link.
+    runCloudLogout(deps);
     expect(runCloudUnlink(deps)).toContain('Unlinked');
     expect(existsSync(linkPath(repo))).toBe(false);
     expect(runCloudUnlink(deps)).toContain('was not linked');
+  });
+
+  it('outside a repository, unlinks to local and links back to general', async () => {
+    await runCloudLogin({ url: API }, deps);
+    const folder = mkdtempSync(join(tmpdir(), 'concord-folder-'));
+    const inFolder = { ...deps, cwd: folder, env: { ...deps.env, CONCORD_REPO_ROOT: folder } };
+
+    expect(await runCloudStatus(inFolder)).toContain('uses Concord Cloud as general');
+    expect(() => runCloudLink({}, inFolder)).toThrow(/nothing to link/);
+    expect(runCloudUnlink(inFolder)).toContain('stays local');
+    // Local state gathered while unlinked does not keep it local once linked.
+    writeFileSync(join(folder, '.concord', 'concord.db'), '');
+    expect(runCloudLink({}, inFolder)).toContain('general workspace again');
+    expect(await runCloudStatus(inFolder)).toContain('is linked to general');
+  });
+
+  it('says why a signed-in repository is local when this machine has no identity', async () => {
+    await runCloudLogin({ url: API }, deps);
+    rmSync(join(home, '.concord', 'machine.json'));
+    expect(await runCloudStatus(deps)).toContain('no Concord Cloud identity');
+  });
+
+  it('keeps a choice to stay local across a logout', async () => {
+    await runCloudLogin({ url: API }, deps);
+    runCloudUnlink(deps);
+    runCloudLogout(deps);
+    expect(runCloudUnlink(deps)).toContain('already stays local');
+    expect(readLocalChoice(repo)).toBe(true);
   });
 
   it('needs --project when there is no origin, and rejects a non-remote', async () => {

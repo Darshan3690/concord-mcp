@@ -254,12 +254,44 @@ export function installMcpConfigs(repoRoot: string): string[] {
   ];
 }
 
+/** The published package an older install would have run through a runner. */
+const CONCORD_PACKAGE_NAME = '@concord-ai/concord-mcp';
+
+/**
+ * Whether a `concord` server entry is one Concord wrote and may therefore be
+ * migrated away. Concord registers the bare `concord-mcp` command; older
+ * installs named the published package in a runner's arguments, as
+ * `@concord-ai/concord-mcp` optionally followed by a version. A path that
+ * merely contains that text is the user's own wrapper and is left alone.
+ */
+function isConcordWrittenEntry(entry: unknown): boolean {
+  const parsed = z
+    .object({ command: z.string().optional(), args: z.array(z.string()).optional() })
+    .loose()
+    .safeParse(entry);
+  if (!parsed.success) return false;
+  if (parsed.data.command === CONCORD_SERVER_COMMAND) return true;
+  // A non-string argument means this is not a shape Concord writes, so the
+  // whole entry is treated as the user's own rather than parsed further.
+  return (parsed.data.args ?? []).some((arg) => isPackageSpec(arg, CONCORD_PACKAGE_NAME));
+}
+
+/** Whether `arg` is exactly `name`, or `name@version` — not a path containing it. */
+function isPackageSpec(arg: string, name: string): boolean {
+  if (arg === name) return true;
+  if (!arg.startsWith(`${name}@`)) return false;
+  const version = arg.slice(name.length + 1);
+  return version !== '' && !version.includes('/') && !version.includes('\\');
+}
+
 /**
  * Remove a user-scoped Cursor Concord server that would shadow the repository-
  * pinned `.cursor/mcp.json` entry. Cursor identifies both registrations by the
  * same server name and may select `user-concord`, whose cwd is unrelated to the
- * open repository. Every other global MCP server and top-level setting is
- * preserved. Returns the absolute path only when a migration was written.
+ * open repository. Only an entry Concord itself wrote is removed — a server the
+ * user registered under the same name is left untouched. Every other global MCP
+ * server and top-level setting is preserved. Returns the absolute path only
+ * when a migration was written.
  */
 export function removeGlobalCursorConcord(env: NodeJS.ProcessEnv): string | undefined {
   const home = configuredHome(env);
@@ -275,7 +307,10 @@ export function removeGlobalCursorConcord(env: NodeJS.ProcessEnv): string | unde
     throw new McpConfigParseError(path);
   }
   const servers = config.mcpServers;
-  if (servers === undefined || !(CONCORD_SERVER_KEY in servers)) return undefined;
+  const entry = servers?.[CONCORD_SERVER_KEY];
+  if (servers === undefined || entry === undefined || !isConcordWrittenEntry(entry)) {
+    return undefined;
+  }
 
   const remaining = Object.fromEntries(
     Object.entries(servers).filter(([key]) => key !== CONCORD_SERVER_KEY),

@@ -208,6 +208,74 @@ describe('removeGlobalCursorConcord', () => {
     expect(removeGlobalCursorConcord({ HOME: home })).toBeUndefined();
   });
 
+  it("keeps a user's own concord server that uses a different command", () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
+    const path = join(home, '.cursor', 'mcp.json');
+    const mine = { command: 'my-own-concord', args: ['--custom'] };
+    const existing = {
+      telemetry: false,
+      mcpServers: { other: { command: 'other' }, concord: mine },
+    };
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(existing, null, 2)}\n`);
+
+    expect(removeGlobalCursorConcord({ HOME: home })).toBeUndefined();
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(existing);
+  });
+
+  it('keeps a custom server whose path merely contains the package name', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
+    const path = join(home, '.cursor', 'mcp.json');
+    const mine = { command: 'node', args: ['/opt/@concord-ai/concord-mcp-wrapper/server.js'] };
+    const existing = { mcpServers: { concord: mine } };
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(existing, null, 2)}\n`);
+
+    expect(removeGlobalCursorConcord({ HOME: home })).toBeUndefined();
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(existing);
+  });
+
+  it('removes an entry pinned to a version of the published package', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
+    const path = join(home, '.cursor', 'mcp.json');
+    const existing = {
+      mcpServers: {
+        concord: { command: 'npx', args: ['-y', '@concord-ai/concord-mcp@0.9.1'] },
+      },
+    };
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(existing, null, 2)}\n`);
+
+    expect(removeGlobalCursorConcord({ HOME: home })).toBe(path);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ mcpServers: {} });
+  });
+
+  it('keeps an entry whose arguments are not all strings', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
+    const path = join(home, '.cursor', 'mcp.json');
+    const existing = { mcpServers: { concord: { command: 'npx', args: ['-y', 42] } } };
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(existing, null, 2)}\n`);
+
+    expect(removeGlobalCursorConcord({ HOME: home })).toBeUndefined();
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(existing);
+  });
+
+  it('removes an entry that points at the published package under another name', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
+    const path = join(home, '.cursor', 'mcp.json');
+    const existing = {
+      mcpServers: {
+        concord: { command: 'bunx', args: ['@concord-ai/concord-mcp@latest'] },
+      },
+    };
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(existing, null, 2)}\n`);
+
+    expect(removeGlobalCursorConcord({ HOME: home })).toBe(path);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ mcpServers: {} });
+  });
+
   it('leaves malformed global Cursor config untouched', () => {
     const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
     const path = join(home, '.cursor', 'mcp.json');

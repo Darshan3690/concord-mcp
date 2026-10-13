@@ -138,6 +138,8 @@ describe('a Grok config Concord cannot extend', () => {
     expect(read(grok)).toBe('mcp_servers = { other = { command = "other" } }\n');
     expect(report.warnings).toHaveLength(1);
     expect(report.warnings[0]).toMatch(/inline table/u);
+    expect(report.warnings[0]?.startsWith(`${grok} `)).toBe(true);
+    expect(report.warnings[0]).not.toContain(` ${join('.grok', 'config.toml')} `);
     expect(report.registrations).toEqual([]);
   });
 

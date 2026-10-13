@@ -147,12 +147,16 @@ export function upsertGeminiSettings(existing: string | undefined, repoRoot?: st
  * harnesses, so setup preserves every unrelated line and replaces either a
  * previous Concord fence or Grok CLI-generated Concord tables.
  */
-export function upsertGrokMcpServer(existing: string | undefined, repoRoot?: string): string {
+export function upsertGrokMcpServer(
+  existing: string | undefined,
+  repoRoot?: string,
+  configPath = GROK_CONFIG_PATH,
+): string {
   const base = removeGrokMcpServer(existing ?? '');
   // TOML cannot add a `[mcp_servers.concord]` table to an inline `mcp_servers = { ... }`.
   if ([...grokKeyPaths(base)].some(({ path, header }) => !header && path === 'mcp_servers')) {
     throw new McpConfigParseError(
-      GROK_CONFIG_PATH,
+      configPath,
       'sets mcp_servers as an inline table, which Concord cannot add to',
     );
   }

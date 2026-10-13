@@ -6,6 +6,7 @@ import { receiverActive } from '../domain/delivery.js';
 import { harnessConfigFor } from '../domain/harness-config.js';
 import { resolveActorId, type AgentIdentity } from '../domain/identity.js';
 import type { SemanticTelemetryEvent, TelemetryRecorder } from '../telemetry/events.js';
+import type { WorkspaceContext } from '../workspaces/manager.js';
 import { SocketAgentMessageDispatcher } from '../relay/socket-dispatcher.js';
 import {
   finishWorkInputShape,
@@ -438,7 +439,8 @@ function transferFields(result: TransferWorkResult): Record<string, unknown> {
 export function registerWorkflowTools(
   server: McpServer,
   repos: Repositories,
-  onWrite?: () => void,
+  /** Runs after each write, given the workspace a call pinned across an await. */
+  onWrite?: (workspace?: WorkspaceContext) => void,
   selectWorkspace?: SelectWorkspace,
   session?: AgentIdentity,
   getAvailableUpdate?: () => AvailableUpdate | undefined,
@@ -454,10 +456,13 @@ export function registerWorkflowTools(
   let updateNoticeShown = false;
 
   /** Add one neutral recovery hint per inactive period to this MCP session. */
-  const withReceiverAdvisory = <T extends WorkflowToolResponse>(result: T): T => {
+  const withReceiverAdvisory = <T extends WorkflowToolResponse>(
+    result: T,
+    callRepos: Repositories,
+  ): T => {
     const agentId = session?.agentId;
     if (agentId === undefined) return result;
-    const endpoint = repos.agentEndpoints.getByAgent(agentId);
+    const endpoint = callRepos.agentEndpoints.getByAgent(agentId);
     const config = endpoint === undefined ? undefined : harnessConfigFor(endpoint.provider);
     if (endpoint === undefined || config?.monitor.verified !== true || !config.monitor.background) {
       return result;
@@ -517,8 +522,10 @@ export function registerWorkflowTools(
     };
   };
 
-  const withSessionAdvisories = <T extends WorkflowToolResponse>(result: T): T =>
-    withUpdateAdvisory(withReceiverAdvisory(result));
+  const withSessionAdvisories = <T extends WorkflowToolResponse>(
+    result: T,
+    callRepos: Repositories = repos,
+  ): T => withUpdateAdvisory(withReceiverAdvisory(result, callRepos));
 
   type TaskTransition = Extract<
     SemanticTelemetryEvent,
@@ -733,6 +740,8 @@ export function registerWorkflowTools(
       // Delivery awaits, and the client's folder may become the active workspace meanwhile:
       // the whole call stays with the workspace it started in.
       const callRepos = workspace?.repos ?? repos;
+      const withCallAdvisories = <T extends WorkflowToolResponse>(result: T): T =>
+        withSessionAdvisories(result, callRepos);
       const telemetryWorkspaceRoot = workspace?.repoRoot;
       const messageTaskId =
         args.task_id ??
@@ -745,9 +754,9 @@ export function registerWorkflowTools(
           : (taskFlowId(messageTaskId) ?? null);
       try {
         const result = await handleUpdateWork(callRepos, withActor(args), dispatcher);
-        onWrite?.();
+        onWrite?.(workspace);
         if ('update' in result) {
-          return withSessionAdvisories({
+          return withCallAdvisories({
             content: [
               {
                 type: 'text',
@@ -791,7 +800,7 @@ export function registerWorkflowTools(
             telemetryWorkspaceRoot,
           );
         }
-        return withSessionAdvisories({
+        return withCallAdvisories({
           content: [
             {
               type: 'text',
@@ -825,7 +834,7 @@ export function registerWorkflowTools(
           },
         });
       } catch (error) {
-        onWrite?.();
+        onWrite?.(workspace);
         if (error instanceof AgentMessageDeliveryError) {
           telemetry?.recordEvent(
             {
@@ -840,7 +849,7 @@ export function registerWorkflowTools(
             },
             telemetryWorkspaceRoot,
           );
-          return withSessionAdvisories({
+          return withCallAdvisories({
             isError: true,
             content: [
               {

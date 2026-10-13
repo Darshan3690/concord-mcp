@@ -15,7 +15,11 @@ import { workspaceIdForRoot } from '../../src/config/paths.js';
 import { writeUserConfig } from '../../src/config/user-config.js';
 import { hasExplicitRepoRoot, joinClientRoot } from '../../src/workspaces/client-roots.js';
 import { registerWorkflowTools } from '../../src/tools/workflow.js';
-import { WorkspaceManager, routedRepositories } from '../../src/workspaces/manager.js';
+import {
+  type WorkspaceContext,
+  WorkspaceManager,
+  routedRepositories,
+} from '../../src/workspaces/manager.js';
 
 function dir(label: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), `concord-${label}-`)));
@@ -32,6 +36,79 @@ function client(roots: readonly string[] | undefined) {
     getClientCapabilities: () => (roots === undefined ? {} : { roots: {} }),
     listRoots: () => Promise.resolve({ roots: (roots ?? []).map((uri) => ({ uri })) }),
   };
+}
+
+/**
+ * A workflow server whose one live delivery runs `duringDelivery` before it
+ * resolves, and a call that sends `codex:sender`'s prompt to `codex:target`.
+ */
+async function deliveryServer(
+  duringDelivery: (manager: WorkspaceManager) => void,
+  onWrite?: (workspace?: WorkspaceContext) => void,
+) {
+  const launched = repoDir('launched');
+  // A fresh home keeps the store in the repository, whatever this machine's global mode.
+  const manager = WorkspaceManager.fromEnvironment(launched, { HOME: dir('home') });
+  const repos = manager.current().repos;
+  for (const agentId of ['codex:sender', 'codex:target']) {
+    repos.agents.upsert({
+      agentId,
+      kind: 'codex',
+      owner: null,
+      model: null,
+      pid: null,
+      cwd: null,
+      worktree: null,
+      branch: null,
+      summary: null,
+      status: 'active',
+    });
+  }
+  repos.agentEndpoints.upsert({
+    endpointId: 'e1',
+    agentId: 'codex:target',
+    provider: 'codex',
+    transport: 'local-ipc',
+    capabilities: ['local-ipc', 'steer'],
+    address: 'ipc',
+    credentialHash: 'h',
+    status: 'connected',
+    expiresAt: null,
+  });
+  const server = new McpServer({ name: 'test', version: '0' });
+  const deliver = () => {
+    duringDelivery(manager);
+    return Promise.resolve({ provider: 'codex', delivery: 'steer' as const });
+  };
+  registerWorkflowTools(
+    server,
+    routedRepositories(manager),
+    onWrite,
+    (id) => manager.select(id),
+    { agentId: 'codex:sender', kind: 'codex', origin: 'session' },
+    undefined,
+    { deliver },
+  );
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const mcp = new Client({ name: 'test', version: '0' });
+  await Promise.all([mcp.connect(clientSide), server.connect(serverSide)]);
+  const prompt = async () => {
+    try {
+      return await mcp.callTool({
+        name: 'update_work',
+        arguments: {
+          operation: 'prompt',
+          agent_id: 'codex:sender',
+          to_agent_id: 'codex:target',
+          content: 'hi',
+          idempotency_key: 'k1',
+        },
+      });
+    } finally {
+      await mcp.close();
+    }
+  };
+  return { launched, manager, repos, prompt };
 }
 
 describe('joinClientRoot', () => {
@@ -81,69 +158,36 @@ describe('joinClientRoot', () => {
   });
 
   it('keeps a live delivery in the workspace it started in when the folder joins meanwhile', async () => {
-    const launched = repoDir('launched');
     const open = repoDir('open');
-    const manager = new WorkspaceManager(launched);
-    const repos = manager.current().repos;
-    for (const agentId of ['codex:sender', 'codex:target']) {
-      repos.agents.upsert({
-        agentId,
-        kind: 'codex',
-        owner: null,
-        model: null,
-        pid: null,
-        cwd: null,
-        worktree: null,
-        branch: null,
-        summary: null,
-        status: 'active',
-      });
-    }
-    repos.agentEndpoints.upsert({
-      endpointId: 'e1',
-      agentId: 'codex:target',
-      provider: 'codex',
-      transport: 'local-ipc',
-      capabilities: ['local-ipc', 'steer'],
-      address: 'ipc',
-      credentialHash: 'h',
-      status: 'connected',
-      expiresAt: null,
-    });
-    const server = new McpServer({ name: 'test', version: '0' });
-    const deliver = () => {
+    const { manager, repos, prompt } = await deliveryServer((manager) => {
       manager.join(open);
-      return Promise.resolve({ provider: 'codex', delivery: 'steer' as const });
-    };
-    registerWorkflowTools(
-      server,
-      routedRepositories(manager),
-      undefined,
-      (id) => manager.select(id),
-      undefined,
-      undefined,
-      { deliver },
-    );
-    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    const mcp = new Client({ name: 'test', version: '0' });
-    await Promise.all([mcp.connect(clientSide), server.connect(serverSide)]);
-
-    const sent = await mcp.callTool({
-      name: 'update_work',
-      arguments: {
-        operation: 'prompt',
-        agent_id: 'codex:sender',
-        to_agent_id: 'codex:target',
-        content: 'hi',
-        idempotency_key: 'k1',
-      },
     });
+
+    const sent = await prompt();
 
     expect(sent.isError).not.toBe(true);
+    expect(manager.current().repoRoot).toBe(open);
     expect(repos.agentMessages.listByAgent('codex:target').map((m) => m.status)).toEqual([
       'delivered',
     ]);
-    await mcp.close();
+  });
+
+  it('reports a delivered message as sent when a cloud refusal lands meanwhile', async () => {
+    const written: string[] = [];
+    const { launched, manager, repos, prompt } = await deliveryServer(
+      (manager) => {
+        manager.refuse('works through Concord Cloud');
+      },
+      (workspace) => written.push((workspace ?? manager.current()).repoRoot),
+    );
+
+    const sent = await prompt();
+
+    expect(sent.isError).not.toBe(true);
+    expect(written).toEqual([launched]);
+    expect(repos.agentMessages.listByAgent('codex:target').map((m) => m.status)).toEqual([
+      'delivered',
+    ]);
   });
 
   it('refuses a folder linked to Concord Cloud instead of serving it locally', async () => {

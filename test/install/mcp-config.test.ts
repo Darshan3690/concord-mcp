@@ -14,6 +14,7 @@ import {
   upsertGrokMcpServer,
   upsertMcpServer,
   hasGrokMcpServer,
+  removeGrokMcpServer,
 } from '../../src/install/mcp-config.js';
 
 describe('upsertMcpServer', () => {
@@ -180,6 +181,34 @@ describe('upsertGrokMcpServer', () => {
     const afterString = 'prompt = """\n[example]\n"""\nmcp_servers = { other = {} }\n';
     expect(() => upsertGrokMcpServer(afterString)).toThrow(McpConfigParseError);
   });
+
+  it('keeps a multi-line string that quotes a Concord table, and what follows it', () => {
+    for (const quote of ['"""', "'''"]) {
+      const existing =
+        `prompt = ${quote}\n[mcp_servers.concord]\ncommand = "quoted"\n${quote}\n` +
+        'after = true\n';
+      expect(removeGrokMcpServer(existing)).toBe(existing.trimEnd());
+      const updated = upsertGrokMcpServer(existing);
+      expect(updated.startsWith(existing)).toBe(true);
+      expect(updated.match(/^\[mcp_servers\.concord\]$/gmu)).toHaveLength(2);
+    }
+  });
+
+  it('still replaces its own tables when one holds a multi-line string', () => {
+    const existing =
+      '[mcp_servers.concord]\ncommand = "old"\nnote = """\n[other]\n"""\n\n[ui]\nmode = 1\n';
+    expect(removeGrokMcpServer(existing)).toBe('[ui]\nmode = 1');
+  });
+
+  it('reads quotes inside single-line strings and comments as text', () => {
+    for (const before of [`a = '"""'`, "a = \"'''\"", '# """ opens nothing', "a = 1 # '''"]) {
+      expect(() => upsertGrokMcpServer(`${before}\nmcp_servers = { other = {} }\n`)).toThrow(
+        McpConfigParseError,
+      );
+      const existing = `${before}\n[mcp_servers.concord]\ncommand = "old"\n`;
+      expect(removeGrokMcpServer(existing)).toBe(before);
+    }
+  });
 });
 
 describe('removeGlobalCursorConcord', () => {
@@ -295,6 +324,9 @@ describe('hasGrokMcpServer', () => {
       '[mcp_servers.concord.env]\nA = "1"',
       '[mcp_servers]\nconcord = { command = "x" }',
       'mcp_servers.concord.command = "x"',
+      'mcp_servers = { concord = { command = "x" } }',
+      'mcp_servers = { other = { command = "y" }, "concord" = { command = "x" } }',
+      'mcp_servers = { concord.command = "x" }',
     ]) {
       expect(hasGrokMcpServer(toml)).toBe(true);
     }
@@ -303,6 +335,9 @@ describe('hasGrokMcpServer', () => {
       '[mcp_servers]\nconcord_x = { command = "x" }',
       '[other]\nconcord = { command = "x" }',
       '# [mcp_servers.concord]',
+      'prompt = """\n[mcp_servers.concord]\n"""',
+      'mcp_servers = { other = { concord = "x" } }',
+      'mcp_servers = { other = "concord = 1" }',
     ]) {
       expect(hasGrokMcpServer(toml)).toBe(false);
     }

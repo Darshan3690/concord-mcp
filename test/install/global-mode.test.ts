@@ -137,8 +137,32 @@ describe('a Grok config Concord cannot extend', () => {
     const report = applyGlobalMode(env, true);
     expect(read(grok)).toBe('mcp_servers = { other = { command = "other" } }\n');
     expect(report.warnings).toHaveLength(1);
-    expect(report.warnings.join()).toMatch(/inline table/u);
+    expect(report.warnings[0]).toMatch(/inline table/u);
     expect(report.registrations).toEqual([]);
+  });
+
+  it('is left as it is, without a warning, when it registers Concord inline', () => {
+    const env = machine(['grok']);
+    const grok = join(env.HOME, '.grok', 'config.toml');
+    mkdirSync(join(env.HOME, '.grok'));
+    const inline = 'mcp_servers = { concord = { command = "my-concord" } }\n';
+    writeFileSync(grok, inline);
+    const report = applyGlobalMode(env, true);
+    expect(read(grok)).toBe(inline);
+    expect(report.warnings).toEqual([]);
+    expect(report.registrations).toEqual([]);
+  });
+
+  it('keeps a multi-line string that quotes a Concord table when turned off', () => {
+    const env = machine(['grok']);
+    const grok = join(env.HOME, '.grok', 'config.toml');
+    mkdirSync(join(env.HOME, '.grok'));
+    const own = 'prompt = """\n[mcp_servers.concord]\nnot = "a table"\n"""\nafter = true\n';
+    writeFileSync(grok, own);
+    const on = applyGlobalMode(env, true);
+    expect(on.registrations).toEqual(['grok']);
+    applyGlobalMode(env, false, { registrations: on.registrations });
+    expect(read(grok)).toBe(own);
   });
 });
 

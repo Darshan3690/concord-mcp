@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path';
 
 import { z } from 'zod';
 
+import { inlineTableKeys, tomlKeyPath, tomlLines } from './toml-lines.js';
+
 /** The key Concord registers itself under in an `mcpServers` map. */
 export const CONCORD_SERVER_KEY = 'concord';
 /** The binary clients spawn to run the stdio MCP server. */
@@ -71,34 +73,28 @@ export function hasMcpServer(existing: string): boolean {
   return CONCORD_SERVER_KEY in (mcpConfigSchema.parse(JSON.parse(existing)).mcpServers ?? {});
 }
 
-/** A TOML key path with spacing and quotes removed: `mcp_servers . "concord"` → `mcp_servers.concord`. */
-function tomlKeyPath(raw: string): string {
-  return raw.replace(/\s+/gu, '').replace(/["']/gu, '');
-}
-
 const GROK_CONCORD_KEY = /^mcp_servers\.concord(?:\.|$)/u;
 
 /** Each key path Grok TOML assigns or opens as a table, spacing and quotes removed. */
 function* grokKeyPaths(existing: string): Generator<{ path: string; header: boolean }> {
   let table = '';
-  let multiline: string | undefined;
-  for (const line of existing.split(/\r?\n/u)) {
+  for (const { text, inString } of tomlLines(existing)) {
     // A line inside a multi-line string is text, however much it looks like TOML.
-    if (multiline !== undefined) {
-      if (line.includes(multiline)) multiline = undefined;
-      continue;
-    }
-    const quote = /("""|''')/u.exec(line)?.[1];
-    if (quote !== undefined && line.split(quote).length % 2 === 0) multiline = quote;
-    const header = /^\s*\[([^\]]+)\]/u.exec(line)?.[1];
+    if (inString) continue;
+    const header = /^\s*\[([^\]]+)\]/u.exec(text)?.[1];
     if (header !== undefined) {
       table = tomlKeyPath(header);
       yield { path: table, header: true };
       continue;
     }
-    const key = /^\s*([^=#]+?)\s*=/u.exec(line)?.[1];
-    if (key !== undefined)
-      yield { path: tomlKeyPath(table === '' ? key : `${table}.${key}`), header: false };
+    const assignment = /^\s*([^=#]+?)\s*=/u.exec(text);
+    const key = assignment?.[1];
+    if (assignment === null || key === undefined) continue;
+    const path = tomlKeyPath(table === '' ? key : `${table}.${key}`);
+    yield { path, header: false };
+    for (const inner of inlineTableKeys(text.slice(assignment[0].length))) {
+      yield { path: `${path}.${inner}`, header: false };
+    }
   }
 }
 
@@ -176,25 +172,24 @@ export function upsertGrokMcpServer(existing: string | undefined, repoRoot?: str
 
 /** Grok TOML without Concord's fence or tables, every other line kept. */
 export function removeGrokMcpServer(existing: string): string {
-  const lines = existing.split(/\r?\n/u);
   const preserved: string[] = [];
   let inOwnedFence = false;
   let inConcordTable = false;
 
-  for (const line of lines) {
-    if (line.trim() === GROK_FENCE_START) {
+  for (const { text: line, inString } of tomlLines(existing)) {
+    if (!inString && line.trim() === GROK_FENCE_START) {
       inOwnedFence = true;
       inConcordTable = false;
       continue;
     }
     if (inOwnedFence) {
-      if (line.trim() === GROK_FENCE_END) inOwnedFence = false;
+      if (!inString && line.trim() === GROK_FENCE_END) inOwnedFence = false;
       continue;
     }
 
-    const table = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/u.exec(line)?.[1]?.trim();
+    const table = inString ? undefined : /^\s*\[([^\]]+)\]\s*(?:#.*)?$/u.exec(line)?.[1];
     if (table !== undefined) {
-      inConcordTable = table === 'mcp_servers.concord' || table === 'mcp_servers.concord.env';
+      inConcordTable = GROK_CONCORD_KEY.test(tomlKeyPath(table));
       if (inConcordTable) continue;
     }
     if (!inConcordTable) preserved.push(line);

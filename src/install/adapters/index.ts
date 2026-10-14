@@ -1,17 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import {
-  existsSync,
-  chmodSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readlinkSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import {
   HARNESS_CONFIGS,
@@ -19,13 +8,23 @@ import {
   type MonitorKind,
 } from '../../domain/harness-config.js';
 import { userHome } from '../../config/paths.js';
-import { claudeSkillsPluginPath } from '../claude-plugin.js';
 import { installCodexHooks, installCodexMcpConfig, uninstallCodexConfig } from '../codex-config.js';
 import {
   gooseConfigInstalled,
   installGooseMcpConfig,
   uninstallGooseConfig,
 } from '../goose-config.js';
+import {
+  cursorTarget,
+  geminiTarget,
+  hasConcordManifest,
+  installLink,
+  isSymlink,
+  linkTarget,
+  packagedAdapter,
+  packagedPath,
+  type LinkedHarness,
+} from './links.js';
 
 export type { HarnessName, MonitorKind } from '../../domain/harness-config.js';
 export type AdapterStatus =
@@ -52,52 +51,6 @@ export function executablePath(name: string, env: NodeJS.ProcessEnv): string | u
     }
   }
   return undefined;
-}
-
-function packagedPath(moduleUrl: string, parts: readonly string[]): string | undefined {
-  let directory = dirname(fileURLToPath(moduleUrl));
-  for (let depth = 0; depth < 7; depth += 1) {
-    const candidate = join(directory, ...parts);
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-  return undefined;
-}
-
-function isSymlink(path: string): boolean {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-function installLink(source: string, target: string): 'installed' | 'occupied' {
-  mkdirSync(dirname(target), { recursive: true });
-  if (existsSync(target) || isSymlink(target)) {
-    if (!isSymlink(target)) return 'occupied';
-    if (readlinkSync(target) === source) return 'installed';
-    rmSync(target);
-  }
-  symlinkSync(source, target, process.platform === 'win32' ? 'junction' : 'dir');
-  return 'installed';
-}
-
-function hasConcordManifest(path: string): boolean {
-  const manifests = [
-    join(path, '.claude-plugin', 'plugin.json'),
-    join(path, 'gemini-extension.json'),
-    join(path, 'package.json'),
-  ];
-  return manifests.some((manifest) => {
-    try {
-      return readFileSync(manifest, 'utf8').includes('concord-relay');
-    } catch {
-      return false;
-    }
-  });
 }
 
 export function run(
@@ -158,7 +111,7 @@ function installedLinkReport(
 function statusClaude(env: NodeJS.ProcessEnv): AdapterReport {
   const config = HARNESS_CONFIGS['claude-code'];
   const executable = executablePath(config.executable, env);
-  const target = claudeSkillsPluginPath(env);
+  const target = linkTarget('claude-code', env);
   if (executable !== undefined) {
     const version = versionTuple(run(executable, ['--version'], env).output);
     if (version === undefined || !atLeast(version, config.minimumVersion)) {
@@ -218,14 +171,6 @@ function statusCodex(env: NodeJS.ProcessEnv): AdapterReport {
       ? config.installedDetail
       : 'Global hooks are installed, but the managed app-server daemon is not ready.',
   };
-}
-
-function geminiTarget(env: NodeJS.ProcessEnv): string {
-  return join(userHome(env), '.gemini', 'extensions', 'concord-relay');
-}
-
-function cursorTarget(env: NodeJS.ProcessEnv): string {
-  return join(userHome(env), '.cursor', 'extensions', 'get-concord-ai.concord-relay');
 }
 
 const CURSOR_HOOKS = {
@@ -505,19 +450,17 @@ export function statusGlobalAdapters(
   ];
 }
 
-function installPackagedLink(
+function requirePackagedLink(
   moduleUrl: string,
-  parts: readonly string[],
-  target: string,
-): 'installed' | 'occupied' | 'missing' {
-  const source = packagedPath(moduleUrl, parts);
-  return source === undefined ? 'missing' : installLink(source, target);
-}
-
-function requirePackagedLink(moduleUrl: string, parts: readonly string[], target: string): void {
-  const result = installPackagedLink(moduleUrl, parts, target);
-  if (result === 'missing') throw new Error(`Packaged adapter is missing: ${parts.join('/')}`);
-  if (result === 'occupied') throw new Error(`Refusing to replace non-Concord path: ${target}`);
+  harness: LinkedHarness,
+  env: NodeJS.ProcessEnv,
+): void {
+  const source = packagedAdapter(moduleUrl, harness);
+  const target = linkTarget(harness, env);
+  if (source === undefined) throw new Error(`Packaged ${harness} adapter is missing.`);
+  if (installLink(source, target) === 'occupied') {
+    throw new Error(`Refusing to replace non-Concord path: ${target}`);
+  }
 }
 
 export function installGlobalAdapters(
@@ -536,7 +479,7 @@ export function installGlobalAdapters(
 
   attempt('claude-code', () => {
     if (executablePath('claude', env) !== undefined) {
-      requirePackagedLink(moduleUrl, ['plugin', 'concord-relay'], claudeSkillsPluginPath(env));
+      requirePackagedLink(moduleUrl, 'claude-code', env);
     }
   });
 
@@ -556,12 +499,12 @@ export function installGlobalAdapters(
 
   attempt('gemini', () => {
     if (executablePath('gemini', env) !== undefined) {
-      requirePackagedLink(moduleUrl, ['plugin', 'gemini', 'concord-relay'], geminiTarget(env));
+      requirePackagedLink(moduleUrl, 'gemini', env);
     }
   });
   attempt('cursor', () => {
     if (executablePath('cursor', env) !== undefined) {
-      requirePackagedLink(moduleUrl, ['plugin', 'cursor', 'concord-relay'], cursorTarget(env));
+      requirePackagedLink(moduleUrl, 'cursor', env);
       installCursorHooks(env);
     }
   });
@@ -616,9 +559,9 @@ function removeOwnedLink(path: string): boolean {
 }
 
 export function uninstallGlobalAdapters(env: NodeJS.ProcessEnv = process.env): AdapterReport[] {
-  removeOwnedLink(claudeSkillsPluginPath(env));
-  removeOwnedLink(geminiTarget(env));
-  removeOwnedLink(cursorTarget(env));
+  removeOwnedLink(linkTarget('claude-code', env));
+  removeOwnedLink(linkTarget('gemini', env));
+  removeOwnedLink(linkTarget('cursor', env));
   uninstallCursorHooks(env);
   const grok = executablePath('grok', env);
   if (grok !== undefined) run(grok, ['plugin', 'uninstall', 'concord-relay', '--confirm'], env);

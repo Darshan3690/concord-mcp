@@ -66,4 +66,10 @@ describe('adapter links', () => {
       expect(packagedPath(url, ['plugin', 'concord-relay'])).toBe(source);
     }
   });
+
+  it('reports nothing when the package has no such directory', () => {
+    const bare = mkdtempSync(join(tmpdir(), 'concord-bare-'));
+    const url = pathToFileURL(join(bare, 'dist', 'cli', 'setup.js')).href;
+    expect(packagedPath(url, ['plugin', 'concord-relay'])).toBeUndefined();
+  });
 });

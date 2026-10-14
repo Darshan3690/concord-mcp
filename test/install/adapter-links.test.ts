@@ -1,8 +1,10 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -13,7 +15,19 @@ import { pathToFileURL } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { claudeSkillsPluginPath } from '../../src/install/claude-plugin.js';
-import { installLink, packagedPath } from '../../src/install/adapters/links.js';
+import {
+  adapterNeedsAttention,
+  renderAdapterReport,
+  statusGlobalAdapters,
+} from '../../src/install/adapters/index.js';
+import {
+  inspectLink,
+  installLink,
+  isEphemeralPath,
+  linkNeedsRepair,
+  packagedPath,
+  repairAdapterLinks,
+} from '../../src/install/adapters/links.js';
 
 /** A stand-in package layout: <root>/plugin/concord-relay + a caller module. */
 function packagedTree(): { root: string; moduleUrl: string; source: string } {
@@ -27,6 +41,8 @@ function packagedTree(): { root: string; moduleUrl: string; source: string } {
     source,
   };
 }
+
+const LASTING = (): boolean => false;
 
 describe('adapter links', () => {
   let home: string;
@@ -45,8 +61,8 @@ describe('adapter links', () => {
     mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
     symlinkSync(join(home, 'gone'), target);
 
-    expect(installLink(source, target)).toBe('installed');
-    expect(installLink(source, target)).toBe('installed');
+    expect(installLink(source, target, LASTING)).toBe('installed');
+    expect(installLink(source, target, LASTING)).toBe('installed');
     expect(readlinkSync(target)).toBe(source);
   });
 
@@ -55,8 +71,22 @@ describe('adapter links', () => {
     mkdirSync(join(target, '.claude-plugin'), { recursive: true });
     writeFileSync(join(target, '.claude-plugin', 'plugin.json'), '{"name":"mine"}');
 
-    expect(installLink(source, target)).toBe('occupied');
+    expect(installLink(source, target, LASTING)).toBe('occupied');
     expect(readFileSync(join(target, '.claude-plugin', 'plugin.json'), 'utf8')).toContain('mine');
+  });
+
+  it('keeps a working link rather than moving it into a throwaway checkout', () => {
+    const lasting = packagedTree();
+    const scratch = packagedTree();
+    const isScratch = (path: string): boolean => path.startsWith(scratch.root);
+    installLink(lasting.source, target, isScratch);
+
+    installLink(scratch.source, target, isScratch);
+    expect(readlinkSync(target)).toBe(lasting.source);
+
+    rmSync(lasting.root, { recursive: true });
+    installLink(scratch.source, target, isScratch);
+    expect(readlinkSync(target)).toBe(scratch.source);
   });
 
   it('finds a packaged directory from any caller depth', () => {
@@ -71,5 +101,60 @@ describe('adapter links', () => {
     const bare = mkdtempSync(join(tmpdir(), 'concord-bare-'));
     const url = pathToFileURL(join(bare, 'dist', 'cli', 'setup.js')).href;
     expect(packagedPath(url, ['plugin', 'concord-relay'])).toBeUndefined();
+  });
+
+  it('treats temp directories and the npx cache as throwaway', () => {
+    expect(isEphemeralPath(join(tmpdir(), 'checkout', 'plugin'))).toBe(true);
+    expect(isEphemeralPath('/private/tmp/claude-501/scratchpad/pr200/plugin')).toBe(true);
+    expect(isEphemeralPath('/home/a/.npm/_npx/abc/node_modules/x/plugin')).toBe(true);
+    expect(isEphemeralPath('/home/a/.nvm/versions/node/v24/lib/node_modules/x/plugin')).toBe(false);
+  });
+
+  it('reports a dangling link with where it points and where it should', () => {
+    const { moduleUrl, source } = packagedTree();
+    const gone = join(home, 'scratchpad', 'plugin', 'concord-relay');
+    mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+    symlinkSync(gone, target);
+
+    expect(inspectLink(target, source)).toMatchObject({ health: 'dangling', pointsTo: gone });
+    const claude = statusGlobalAdapters(env, undefined, moduleUrl)[0];
+    expect(claude?.status).toBe('action_required');
+    expect(claude?.capabilities).toEqual([]);
+    expect(claude?.detail).toContain('concord doctor --fix');
+    expect(claude !== undefined && adapterNeedsAttention(claude)).toBe(true);
+    const rendered = renderAdapterReport(claude === undefined ? [] : [claude]);
+    expect(rendered).toContain(`link:     ${target} -> ${gone}`);
+    expect(rendered).toContain(`expected: ${source}`);
+  });
+
+  it('accepts a link to another lasting copy but flags one into a temp checkout', () => {
+    const { moduleUrl, source } = packagedTree();
+    const other = packagedTree();
+    installLink(other.source, target, LASTING);
+
+    const check = inspectLink(target, source);
+    expect(check.health).toBe('foreign');
+    expect(linkNeedsRepair(check, LASTING)).toBe(false);
+    // Both copies sit in the OS temp directory, so this one will be cleaned up.
+    const claude = statusGlobalAdapters(env, undefined, moduleUrl)[0];
+    expect(claude?.status).toBe('action_required');
+    expect(claude?.detail).toContain('temporary checkout');
+    expect(claude?.link?.pointsTo).toBe(other.source);
+  });
+
+  it('repairs broken links and leaves healthy ones alone', () => {
+    const { moduleUrl, source } = packagedTree();
+    mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+    symlinkSync(join(home, 'gone'), target);
+    const gemini = join(home, '.gemini', 'extensions', 'concord-relay');
+
+    const repairs = repairAdapterLinks(moduleUrl, env, LASTING);
+
+    expect(repairs).toEqual([
+      { harness: 'claude-code', target, from: join(home, 'gone'), to: source },
+    ]);
+    expect(readlinkSync(target)).toBe(source);
+    expect(existsSync(gemini)).toBe(false);
+    expect(repairAdapterLinks(moduleUrl, env, LASTING)).toEqual([]);
   });
 });

@@ -15,7 +15,10 @@ import {
 } from '../../install/adapters/index.js';
 import {
   brokenAdapterLinks,
+  isEphemeralPath,
+  linkNeedsRepair,
   repairAdapterLinks,
+  type EphemeralTest,
   type LinkRepair,
 } from '../../install/adapters/links.js';
 import { CONCORD_INSTRUCTION_VERSION } from '../../install/instructions.js';
@@ -106,6 +109,7 @@ export interface DoctorOptions {
   /** Ask before repairing; undefined when there is no terminal to ask on. */
   confirm?: ((repairs: readonly LinkRepair[]) => Promise<boolean>) | undefined;
   moduleUrl?: string | undefined;
+  isEphemeral?: EphemeralTest | undefined;
 }
 
 export interface DoctorResult {
@@ -120,17 +124,28 @@ export async function runDoctorCommand(
   options: DoctorOptions = {},
 ): Promise<DoctorResult> {
   const moduleUrl = options.moduleUrl ?? import.meta.url;
-  const broken = brokenAdapterLinks(moduleUrl, env);
+  const isEphemeral = options.isEphemeral ?? isEphemeralPath;
+  const broken = brokenAdapterLinks(moduleUrl, env, isEphemeral);
   const preface: string[] = [];
   if (broken.length > 0) {
     const approved =
       options.fix === true || (options.confirm !== undefined && (await options.confirm(broken)));
-    if (approved) preface.push(renderRepairs(repairAdapterLinks(moduleUrl, env)), '');
-  } else if (options.fix === true) {
-    preface.push('No adapter links need repair.', '');
+    if (approved) preface.push(renderRepairs(repairAdapterLinks(moduleUrl, env, isEphemeral)), '');
   }
   const ctx = openContext(cwd, env);
-  const adapters = statusGlobalAdapters(env, ctx.repoRoot, moduleUrl);
+  const adapters = statusGlobalAdapters(env, ctx.repoRoot, moduleUrl, isEphemeral);
+  if (options.fix === true && broken.length === 0) {
+    const stillBroken = adapters.some(
+      (entry) => entry.link !== undefined && linkNeedsRepair(entry.link, isEphemeral),
+    );
+    preface.push(
+      stillBroken
+        ? 'Broken adapter links cannot be repaired from a temporary copy of Concord. ' +
+            'Run `concord doctor --fix` from the installed package.'
+        : 'No adapter links need repair.',
+      '',
+    );
+  }
   return {
     output: [...preface, buildDoctorReport(ctx, env, adapters)].join('\n'),
     healthy: !adapters.some(adapterNeedsAttention),

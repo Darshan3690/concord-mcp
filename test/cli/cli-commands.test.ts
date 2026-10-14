@@ -134,14 +134,23 @@ describe('CLI read/export commands', () => {
     // No harness on PATH, so only the link decides whether doctor passes.
     const env = { HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), PATH: join(home, 'bin') };
     const link = claudeSkillsPluginPath(env);
+    // Independent of where this checkout lives, including under /tmp.
+    const lasting = (): boolean => false;
     mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
     symlinkSync(join(home, 'deleted-scratchpad'), link);
 
-    const before = await runDoctorCommand(dir, env, { moduleUrl: import.meta.url });
+    const before = await runDoctorCommand(dir, env, {
+      moduleUrl: import.meta.url,
+      isEphemeral: lasting,
+    });
     expect(before.healthy).toBe(false);
     expect(before.output).toContain(`link:     ${link} -> ${join(home, 'deleted-scratchpad')}`);
 
-    const fixed = await runDoctorCommand(dir, env, { fix: true, moduleUrl: import.meta.url });
+    const fixed = await runDoctorCommand(dir, env, {
+      fix: true,
+      moduleUrl: import.meta.url,
+      isEphemeral: lasting,
+    });
     expect(fixed.output).toContain(`Repaired claude-code: ${link}`);
     expect(readlinkSync(link)).toBe(packagedPath(import.meta.url, ['plugin', 'concord-relay']));
     expect(fixed.healthy).toBe(true);

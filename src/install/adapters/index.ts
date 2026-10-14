@@ -19,11 +19,13 @@ import {
   hasConcordManifest,
   inspectLink,
   installLink,
+  isEphemeralPath,
   isSymlink,
   linkNeedsRepair,
   linkTarget,
   packagedAdapter,
   packagedPath,
+  type EphemeralTest,
   type LinkCheck,
   type LinkedHarness,
 } from './links.js';
@@ -92,8 +94,14 @@ function atLeast(actual: readonly number[], required: readonly number[]): boolea
   return true;
 }
 
-function linkCheck(harness: LinkedHarness, env: NodeJS.ProcessEnv, moduleUrl: string): LinkCheck {
-  return inspectLink(linkTarget(harness, env), packagedAdapter(moduleUrl, harness));
+/** The running package, and which paths count as throwaway checkouts. */
+interface LinkContext {
+  moduleUrl: string;
+  isEphemeral: EphemeralTest;
+}
+
+function linkCheck(harness: LinkedHarness, env: NodeJS.ProcessEnv, links: LinkContext): LinkCheck {
+  return inspectLink(linkTarget(harness, env), packagedAdapter(links.moduleUrl, harness));
 }
 
 /** A link that is broken, reported with where it points and how to fix it. */
@@ -102,8 +110,9 @@ function brokenLinkReport(
   detected: boolean,
   monitor: MonitorKind,
   link: LinkCheck,
+  isEphemeral: EphemeralTest,
 ): AdapterReport | undefined {
-  if (!linkNeedsRepair(link)) return undefined;
+  if (!linkNeedsRepair(link, isEphemeral)) return undefined;
   const problem =
     link.health === 'dangling'
       ? 'which no longer exists'
@@ -131,27 +140,39 @@ function installedLinkReport(
   capabilities: string[],
   detail: string,
 ): AdapterReport {
-  const broken = brokenLinkReport(harness, detected, monitor, link);
-  if (broken !== undefined) return broken;
   const installed = link.health === 'linked' || link.health === 'foreign';
-  const foreign = link.health === 'foreign';
   return {
     harness,
     detected,
     status: installed ? 'installed' : detected ? 'action_required' : 'not_detected',
     monitor,
     capabilities,
-    detail: foreign
-      ? `${detail} Linked to the Concord copy at ${link.pointsTo ?? link.target}, not this one.`
-      : detail,
+    ...foreignLinkNote(link, detail),
     ...(installed ? { installedPath: link.target } : {}),
-    ...(foreign ? { link } : {}),
   };
 }
 
-function statusClaude(env: NodeJS.ProcessEnv, moduleUrl: string): AdapterReport {
+/** A working link to another Concord copy keeps its paths visible in the report. */
+function foreignLinkNote(link: LinkCheck, detail: string): Pick<AdapterReport, 'detail' | 'link'> {
+  if (link.health !== 'foreign') return { detail };
+  return {
+    detail: `${detail} Linked to the Concord copy at ${link.pointsTo ?? link.target}, not this one.`,
+    link,
+  };
+}
+
+function statusClaude(env: NodeJS.ProcessEnv, links: LinkContext): AdapterReport {
   const config = HARNESS_CONFIGS['claude-code'];
   const executable = executablePath(config.executable, env);
+  const link = linkCheck('claude-code', env, links);
+  const broken = brokenLinkReport(
+    'claude-code',
+    executable !== undefined,
+    config.monitor.kind,
+    link,
+    links.isEphemeral,
+  );
+  if (broken !== undefined) return broken;
   if (executable !== undefined) {
     const version = versionTuple(run(executable, ['--version'], env).output);
     if (version === undefined || !atLeast(version, config.minimumVersion)) {
@@ -169,7 +190,7 @@ function statusClaude(env: NodeJS.ProcessEnv, moduleUrl: string): AdapterReport 
     'claude-code',
     executable !== undefined,
     config.monitor.kind,
-    linkCheck('claude-code', env, moduleUrl),
+    link,
     [...config.installedCapabilities],
     config.installedDetail,
   );
@@ -322,9 +343,17 @@ function geminiCompletionInjectionReady(repoRoot: string): boolean {
   }
 }
 
-function statusGemini(env: NodeJS.ProcessEnv, moduleUrl: string, repoRoot?: string): AdapterReport {
+function statusGemini(
+  env: NodeJS.ProcessEnv,
+  links: LinkContext,
+  repoRoot?: string,
+): AdapterReport {
   const config = HARNESS_CONFIGS.gemini;
   const executable = executablePath(config.executable, env);
+  const link = linkCheck('gemini', env, links);
+  const detected = executable !== undefined;
+  const broken = brokenLinkReport('gemini', detected, config.monitor.kind, link, links.isEphemeral);
+  if (broken !== undefined) return broken;
   if (executable !== undefined) {
     const version = versionTuple(run(executable, ['--version'], env).output);
     if (version === undefined || !atLeast(version, config.minimumVersion)) {
@@ -342,7 +371,7 @@ function statusGemini(env: NodeJS.ProcessEnv, moduleUrl: string, repoRoot?: stri
     'gemini',
     executable !== undefined,
     config.monitor.kind,
-    linkCheck('gemini', env, moduleUrl),
+    link,
     [...config.installedCapabilities],
     config.installedDetail,
   );
@@ -364,13 +393,13 @@ function statusGemini(env: NodeJS.ProcessEnv, moduleUrl: string, repoRoot?: stri
   };
 }
 
-function statusCursor(env: NodeJS.ProcessEnv, moduleUrl: string): AdapterReport {
+function statusCursor(env: NodeJS.ProcessEnv, links: LinkContext): AdapterReport {
   const config = HARNESS_CONFIGS.cursor;
   const target = cursorTarget(env);
   const executable = executablePath(config.executable, env);
   const detected = executable !== undefined;
-  const link = linkCheck('cursor', env, moduleUrl);
-  const broken = brokenLinkReport('cursor', detected, config.monitor.kind, link);
+  const link = linkCheck('cursor', env, links);
+  const broken = brokenLinkReport('cursor', detected, config.monitor.kind, link, links.isEphemeral);
   if (broken !== undefined) return broken;
   const extensionInstalled = link.health === 'linked' || link.health === 'foreign';
   const hooksInstalled = cursorHookInstalled(env);
@@ -399,9 +428,12 @@ function statusCursor(env: NodeJS.ProcessEnv, moduleUrl: string): AdapterReport 
         : 'not_detected',
     monitor: config.monitor.kind,
     capabilities: installed ? [...config.installedCapabilities] : [],
-    detail: installed
-      ? config.installedDetail
-      : 'The Cursor extension and global lifecycle hooks are not both installed.',
+    ...foreignLinkNote(
+      link,
+      installed
+        ? config.installedDetail
+        : 'The Cursor extension and global lifecycle hooks are not both installed.',
+    ),
     ...(extensionInstalled ? { installedPath: target } : {}),
   };
 }
@@ -483,12 +515,14 @@ export function statusGlobalAdapters(
   env: NodeJS.ProcessEnv = process.env,
   repoRoot?: string,
   moduleUrl: string = import.meta.url,
+  isEphemeral: EphemeralTest = isEphemeralPath,
 ): AdapterReport[] {
+  const links = { moduleUrl, isEphemeral };
   return [
-    statusClaude(env, moduleUrl),
+    statusClaude(env, links),
     statusCodex(env),
-    statusCursor(env, moduleUrl),
-    statusGemini(env, moduleUrl, repoRoot),
+    statusCursor(env, links),
+    statusGemini(env, links, repoRoot),
     statusGrok(env),
     statusGoose(env),
   ];
@@ -498,11 +532,12 @@ function requirePackagedLink(
   moduleUrl: string,
   harness: LinkedHarness,
   env: NodeJS.ProcessEnv,
+  isEphemeral: EphemeralTest,
 ): void {
   const source = packagedAdapter(moduleUrl, harness);
   const target = linkTarget(harness, env);
   if (source === undefined) throw new Error(`Packaged ${harness} adapter is missing.`);
-  if (installLink(source, target) === 'occupied') {
+  if (installLink(source, target, isEphemeral) === 'occupied') {
     throw new Error(`Refusing to replace non-Concord path: ${target}`);
   }
 }
@@ -511,6 +546,7 @@ export function installGlobalAdapters(
   moduleUrl: string,
   env: NodeJS.ProcessEnv = process.env,
   repoRoot?: string,
+  isEphemeral: EphemeralTest = isEphemeralPath,
 ): AdapterReport[] {
   const failures = new Map<HarnessName, string>();
   const attempt = (harness: HarnessName, action: () => void): void => {
@@ -523,7 +559,7 @@ export function installGlobalAdapters(
 
   attempt('claude-code', () => {
     if (executablePath('claude', env) !== undefined) {
-      requirePackagedLink(moduleUrl, 'claude-code', env);
+      requirePackagedLink(moduleUrl, 'claude-code', env, isEphemeral);
     }
   });
 
@@ -543,12 +579,12 @@ export function installGlobalAdapters(
 
   attempt('gemini', () => {
     if (executablePath('gemini', env) !== undefined) {
-      requirePackagedLink(moduleUrl, 'gemini', env);
+      requirePackagedLink(moduleUrl, 'gemini', env, isEphemeral);
     }
   });
   attempt('cursor', () => {
     if (executablePath('cursor', env) !== undefined) {
-      requirePackagedLink(moduleUrl, 'cursor', env);
+      requirePackagedLink(moduleUrl, 'cursor', env, isEphemeral);
       installCursorHooks(env);
     }
   });
@@ -575,7 +611,7 @@ export function installGlobalAdapters(
     installGooseMcpConfig(env);
   });
 
-  const report = statusGlobalAdapters(env, repoRoot, moduleUrl).map((entry) => {
+  const report = statusGlobalAdapters(env, repoRoot, moduleUrl, isEphemeral).map((entry) => {
     const failure = failures.get(entry.harness);
     return failure === undefined
       ? entry

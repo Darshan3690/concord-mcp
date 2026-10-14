@@ -142,6 +142,28 @@ describe('adapter links', () => {
     expect(claude?.link?.pointsTo).toBe(other.source);
   });
 
+  it('flags a link into a temp checkout even when doctor runs from that copy', () => {
+    const { moduleUrl, source } = packagedTree();
+    installLink(source, target, LASTING);
+
+    const check = inspectLink(target, source);
+    expect(check.health).toBe('linked');
+    expect(linkNeedsRepair(check)).toBe(true);
+    expect(statusGlobalAdapters(env, undefined, moduleUrl)[0]?.status).toBe('action_required');
+  });
+
+  it('reports a broken link even when the Claude version is unsupported', () => {
+    const { moduleUrl } = packagedTree();
+    mkdirSync(join(home, 'bin'));
+    writeFileSync(join(home, 'bin', 'claude'), '#!/bin/sh\necho 1.0.0\n', { mode: 0o755 });
+    mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+    symlinkSync(join(home, 'gone'), target);
+
+    const claude = statusGlobalAdapters(env, undefined, moduleUrl, LASTING)[0];
+    expect(claude?.status).toBe('action_required');
+    expect(claude?.link?.health).toBe('dangling');
+  });
+
   it('repairs broken links and leaves healthy ones alone', () => {
     const { moduleUrl, source } = packagedTree();
     mkdirSync(join(home, '.claude', 'skills'), { recursive: true });

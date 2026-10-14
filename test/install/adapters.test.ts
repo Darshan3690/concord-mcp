@@ -15,6 +15,9 @@ import { describe, expect, it } from 'vitest';
 
 import { installGlobalAdapters, statusGlobalAdapters } from '../../src/install/adapters/index.js';
 
+// Links into this checkout count as lasting even when it lives under /tmp.
+const LASTING = (): boolean => false;
+
 describe('global harness adapters', () => {
   it('installs every detected file-based adapter independently', () => {
     const home = mkdtempSync(join(tmpdir(), 'concord-adapters-home-'));
@@ -31,7 +34,7 @@ describe('global harness adapters', () => {
     }
     const env = { HOME: home, PATH: bin };
 
-    const report = installGlobalAdapters(import.meta.url, env);
+    const report = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
 
     expect(report.find((entry) => entry.harness === 'claude-code')?.status).toBe('installed');
     expect(report.find((entry) => entry.harness === 'gemini')?.status).toBe('installed');
@@ -60,8 +63,8 @@ describe('global harness adapters', () => {
       })}\n`,
     );
 
-    installGlobalAdapters(import.meta.url, { HOME: home, PATH: bin });
-    installGlobalAdapters(import.meta.url, { HOME: home, PATH: bin });
+    installGlobalAdapters(import.meta.url, { HOME: home, PATH: bin }, undefined, LASTING);
+    installGlobalAdapters(import.meta.url, { HOME: home, PATH: bin }, undefined, LASTING);
 
     const installedConfig = readFileSync(configPath, 'utf8');
     expect(installedConfig).toContain('node /tmp/user-stop.mjs');
@@ -119,10 +122,12 @@ describe('global harness adapters', () => {
     writeFileSync(gemini, '#!/bin/sh\necho 0.55.1\n');
     chmodSync(gemini, 0o755);
     const env = { HOME: home, PATH: bin };
-    installGlobalAdapters(import.meta.url, env);
+    installGlobalAdapters(import.meta.url, env, undefined, LASTING);
 
     expect(
-      statusGlobalAdapters(env, project).find((entry) => entry.harness === 'gemini'),
+      statusGlobalAdapters(env, project, undefined, LASTING).find(
+        (entry) => entry.harness === 'gemini',
+      ),
     ).toMatchObject({
       status: 'action_required',
       capabilities: ['pull', 'steer', 'busy'],
@@ -138,7 +143,9 @@ describe('global harness adapters', () => {
     );
 
     expect(
-      statusGlobalAdapters(env, project).find((entry) => entry.harness === 'gemini'),
+      statusGlobalAdapters(env, project, undefined, LASTING).find(
+        (entry) => entry.harness === 'gemini',
+      ),
     ).toMatchObject({
       status: 'action_required',
       capabilities: ['pull', 'steer', 'busy'],
@@ -153,7 +160,9 @@ describe('global harness adapters', () => {
     );
 
     expect(
-      statusGlobalAdapters(env, project).find((entry) => entry.harness === 'gemini'),
+      statusGlobalAdapters(env, project, undefined, LASTING).find(
+        (entry) => entry.harness === 'gemini',
+      ),
     ).toMatchObject({
       status: 'installed',
       capabilities: ['pull', 'steer', 'idle', 'busy', 'monitor-command'],
@@ -191,7 +200,12 @@ describe('global harness adapters', () => {
     mkdirSync(occupied, { recursive: true });
     writeFileSync(join(occupied, 'package.json'), '{"name":"someone-else"}');
 
-    const report = installGlobalAdapters(import.meta.url, { HOME: home, PATH: bin });
+    const report = installGlobalAdapters(
+      import.meta.url,
+      { HOME: home, PATH: bin },
+      undefined,
+      LASTING,
+    );
 
     expect(report.find((entry) => entry.harness === 'cursor')?.status).toBe('error');
     expect(report.find((entry) => entry.harness === 'gemini')?.status).toBe('installed');
@@ -242,7 +256,7 @@ describe('global harness adapters', () => {
 
     const env = { HOME: home, PATH: bin };
 
-    const report = installGlobalAdapters(import.meta.url, env);
+    const report = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
 
     expect(report.find((entry) => entry.harness === 'goose')).toMatchObject({
       status: 'unsupported_version',

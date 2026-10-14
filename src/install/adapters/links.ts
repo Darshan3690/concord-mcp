@@ -89,9 +89,11 @@ export function packagedPath(moduleUrl: string, parts: readonly string[]): strin
 export function isEphemeralPath(path: string): boolean {
   const temp = tmpdir();
   const roots = [...EPHEMERAL_ROOTS, temp, realpathOr(temp)];
-  return (
-    path.split(sep).includes('_npx') ||
-    roots.some((root) => path === root || path.startsWith(`${root}${sep}`))
+  // The written path still matters once a dangling destination stops resolving.
+  return [path, realpathOr(path)].some(
+    (candidate) =>
+      candidate.split(sep).includes('_npx') ||
+      roots.some((root) => candidate === root || candidate.startsWith(`${root}${sep}`)),
   );
 }
 
@@ -138,7 +140,8 @@ export function linkNeedsRepair(
   isEphemeral: EphemeralTest = isEphemeralPath,
 ): boolean {
   if (check.health === 'dangling') return true;
-  return check.health === 'foreign' && check.pointsTo !== undefined && isEphemeral(check.pointsTo);
+  const working = check.health === 'linked' || check.health === 'foreign';
+  return working && check.pointsTo !== undefined && isEphemeral(check.pointsTo);
 }
 
 /**

@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readlinkSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,12 +13,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { openDatabase } from '../../src/db/connection.js';
 import { createRepositories } from '../../src/db/index.js';
-import { runDoctor } from '../../src/cli/commands/doctor.js';
+import { runDoctor, runDoctorCommand } from '../../src/cli/commands/doctor.js';
 import { runExportMarkdown } from '../../src/cli/commands/export.js';
 import { runHandoffPacket } from '../../src/cli/commands/handoff.js';
 import { runReviewPacket } from '../../src/cli/commands/review-packet.js';
 import { buildAdoption } from '../../src/domain/adoption.js';
 import { openRepositories } from '../../src/db/index.js';
+import { packagedPath } from '../../src/install/adapters/links.js';
+import { claudeSkillsPluginPath } from '../../src/install/claude-plugin.js';
 import { CONCORD_INSTRUCTION_VERSION } from '../../src/install/instructions.js';
 import { handleClaimWork } from '../../src/tools/claim-work.js';
 import { handleHandoff } from '../../src/tools/handoff.js';
@@ -118,5 +127,32 @@ describe('CLI read/export commands', () => {
     );
 
     expect(runDoctor(dir)).toContain('instructions stale -> AGENTS.md');
+  });
+
+  it('doctor fails on a dangling Claude plugin link and --fix re-points it', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-doctor-home-'));
+    // No harness on PATH, so only the link decides whether doctor passes.
+    const env = { HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), PATH: join(home, 'bin') };
+    const link = claudeSkillsPluginPath(env);
+    // Independent of where this checkout lives, including under /tmp.
+    const lasting = (): boolean => false;
+    mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+    symlinkSync(join(home, 'deleted-scratchpad'), link);
+
+    const before = await runDoctorCommand(dir, env, {
+      moduleUrl: import.meta.url,
+      isEphemeral: lasting,
+    });
+    expect(before.healthy).toBe(false);
+    expect(before.output).toContain(`link:     ${link} -> ${join(home, 'deleted-scratchpad')}`);
+
+    const fixed = await runDoctorCommand(dir, env, {
+      fix: true,
+      moduleUrl: import.meta.url,
+      isEphemeral: lasting,
+    });
+    expect(fixed.output).toContain(`Repaired claude-code: ${link}`);
+    expect(readlinkSync(link)).toBe(packagedPath(import.meta.url, ['plugin', 'concord-relay']));
+    expect(fixed.healthy).toBe(true);
   });
 });

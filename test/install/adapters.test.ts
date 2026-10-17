@@ -110,6 +110,7 @@ describe('global harness adapters', () => {
       'harness-monitor',
       'harness-monitor',
       'harness-monitor',
+      'harness-monitor',
     ]);
   });
 
@@ -287,5 +288,47 @@ describe('global harness adapters', () => {
 
     const config = readFileSync(configPath, 'utf8');
     expect(config).toContain('- existing-extension');
+  });
+
+  it('detects and installs Antigravity global MCP config when agy is present', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-'));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    const agy = join(bin, 'agy');
+    writeFileSync(agy, '#!/bin/sh\necho 1.0.0\n');
+    chmodSync(agy, 0o755);
+
+    const env = { HOME: home, PATH: bin };
+    const report = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
+
+    expect(report.find((entry) => entry.harness === 'antigravity')).toMatchObject({
+      status: 'installed',
+      capabilities: ['pull', 'busy'],
+    });
+
+    const mcpConfig = readFileSync(join(home, '.gemini', 'config', 'mcp_config.json'), 'utf8');
+    expect(mcpConfig).toContain('concord-mcp');
+  });
+
+  it('reports action_required when Antigravity is detected via ANTIGRAVITY_AGENT but unconfigured', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-env-'));
+    const env = { HOME: home, PATH: '', ANTIGRAVITY_AGENT: '1' };
+
+    const report = statusGlobalAdapters(env);
+    expect(report.find((entry) => entry.harness === 'antigravity')).toMatchObject({
+      detected: true,
+      status: 'action_required',
+    });
+  });
+
+  it('reports not_detected when Antigravity is absent', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-absent-'));
+    const env = { HOME: home, PATH: '' };
+
+    const report = statusGlobalAdapters(env);
+    expect(report.find((entry) => entry.harness === 'antigravity')).toMatchObject({
+      detected: false,
+      status: 'not_detected',
+    });
   });
 });

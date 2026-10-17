@@ -11,7 +11,11 @@ export const CONCORD_SERVER_KEY = 'concord';
 export const CONCORD_SERVER_COMMAND = 'concord-mcp';
 
 /** Repo-relative config paths that share the `mcpServers` JSON shape. */
-const JSON_TARGETS: readonly string[] = ['.mcp.json', join('.cursor', 'mcp.json')];
+const JSON_TARGETS: readonly string[] = [
+  '.mcp.json',
+  join('.cursor', 'mcp.json'),
+  join('.agents', 'mcp_config.json'),
+];
 const GEMINI_CONFIG_PATH = join('.gemini', 'settings.json');
 const GROK_CONFIG_PATH = join('.grok', 'config.toml');
 const GROK_FENCE_START = '# concord:mcp-start';
@@ -70,7 +74,12 @@ export function upsertMcpServer(existing: string | undefined, repoRoot?: string)
 
 /** Whether an `mcpServers` config string already registers Concord. */
 export function hasMcpServer(existing: string): boolean {
-  return CONCORD_SERVER_KEY in (mcpConfigSchema.parse(JSON.parse(existing)).mcpServers ?? {});
+  try {
+    if (existing.trim() === '') return false;
+    return CONCORD_SERVER_KEY in (mcpConfigSchema.parse(JSON.parse(existing)).mcpServers ?? {});
+  } catch {
+    return false;
+  }
 }
 
 const GROK_CONCORD_KEY = /^mcp_servers\.concord(?:\.|$)/u;

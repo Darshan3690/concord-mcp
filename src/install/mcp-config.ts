@@ -274,10 +274,24 @@ const CONCORD_PACKAGE_NAME = '@concord-ai/concord-mcp';
  */
 export function isConcordWrittenEntry(entry: unknown): boolean {
   const parsed = z
-    .object({ command: z.string().optional(), args: z.array(z.string()).optional() })
+    .object({
+      command: z.string().optional(),
+      args: z.array(z.string()).optional(),
+      env: z.record(z.string(), z.string()).optional(),
+    })
     .loose()
     .safeParse(entry);
   if (!parsed.success) return false;
+  // If the user specified custom arguments, it is a custom entry unless matching the runner shape.
+  if (parsed.data.args !== undefined && parsed.data.args.length > 0) {
+    const isRunner = parsed.data.args.some((arg) => isPackageSpec(arg, CONCORD_PACKAGE_NAME));
+    if (!isRunner) return false;
+  }
+  // If the user specified custom environment variables (other than CONCORD_REPO_ROOT), it is custom.
+  const envKeys = Object.keys(parsed.data.env ?? {});
+  if (envKeys.some((key) => key !== 'CONCORD_REPO_ROOT')) {
+    return false;
+  }
   if (parsed.data.command === CONCORD_SERVER_COMMAND) return true;
   // A non-string argument means this is not a shape Concord writes, so the
   // whole entry is treated as the user's own rather than parsed further.

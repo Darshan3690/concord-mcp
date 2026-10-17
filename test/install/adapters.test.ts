@@ -376,4 +376,38 @@ describe('global harness adapters', () => {
     const report = statusGlobalAdapters(env);
     expect(report.find((entry) => entry.harness === 'antigravity')?.status).toBe('error');
   });
+
+  it('preserves concord server with custom args and env in Antigravity mcp_config.json', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-args-env-'));
+    const configDir = join(home, '.gemini', 'config');
+    mkdirSync(configDir, { recursive: true });
+    const configPath = join(configDir, 'mcp_config.json');
+    const customConfig = JSON.stringify({
+      mcpServers: {
+        concord: {
+          command: 'concord-mcp',
+          args: ['--custom-port', '8080'],
+          env: {
+            CUSTOM_ENV: 'active',
+          },
+        },
+      },
+    });
+    writeFileSync(configPath, customConfig);
+
+    const env = { HOME: home, ANTIGRAVITY_AGENT: '1' };
+    const installReport = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
+    expect(installReport.find((entry) => entry.harness === 'antigravity')?.status).toBe('installed');
+
+    const afterInstall = readFileSync(configPath, 'utf8');
+    expect(afterInstall).toContain('--custom-port');
+    expect(afterInstall).toContain('CUSTOM_ENV');
+
+    const uninstallReport = uninstallGlobalAdapters(env);
+    expect(uninstallReport.find((entry) => entry.harness === 'antigravity')?.status).toBe('installed');
+
+    const afterUninstall = readFileSync(configPath, 'utf8');
+    expect(afterUninstall).toContain('--custom-port');
+    expect(afterUninstall).toContain('CUSTOM_ENV');
+  });
 });

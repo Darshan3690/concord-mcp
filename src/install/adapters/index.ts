@@ -684,8 +684,8 @@ export function installGlobalAdapters(
     const path = join(userHome(env), '.gemini', 'config', 'mcp_config.json');
     if (existsSync(path)) {
       const existing = readFileSync(path, 'utf8');
-      if (hasMcpServer(existing) && !isConcordServerOwned(existing)) {
-        // User has a custom concord server entry - preserve it!
+      if (hasMcpServer(existing)) {
+        // A concord server entry is already registered (custom or standard) — preserve it!
         return;
       }
       mkdirSync(dirname(path), { recursive: true });

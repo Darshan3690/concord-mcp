@@ -13,7 +13,11 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { installGlobalAdapters, statusGlobalAdapters } from '../../src/install/adapters/index.js';
+import {
+  installGlobalAdapters,
+  statusGlobalAdapters,
+  uninstallGlobalAdapters,
+} from '../../src/install/adapters/index.js';
 
 // Links into this checkout count as lasting even when it lives under /tmp.
 const LASTING = (): boolean => false;
@@ -330,5 +334,46 @@ describe('global harness adapters', () => {
       detected: false,
       status: 'not_detected',
     });
+  });
+
+  it('preserves custom concord server in Antigravity mcp_config.json on install and uninstall', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-custom-'));
+    const configDir = join(home, '.gemini', 'config');
+    mkdirSync(configDir, { recursive: true });
+    const configPath = join(configDir, 'mcp_config.json');
+    const customConfig = JSON.stringify({
+      mcpServers: {
+        concord: {
+          command: 'my-custom-concord',
+          args: ['--custom'],
+        },
+      },
+    });
+    writeFileSync(configPath, customConfig);
+
+    const env = { HOME: home, ANTIGRAVITY_AGENT: '1' };
+    const installReport = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
+    expect(installReport.find((entry) => entry.harness === 'antigravity')?.status).toBe('installed');
+
+    const afterInstall = readFileSync(configPath, 'utf8');
+    expect(afterInstall).toContain('my-custom-concord');
+
+    const uninstallReport = uninstallGlobalAdapters(env);
+    expect(uninstallReport.find((entry) => entry.harness === 'antigravity')?.status).toBe('installed');
+
+    const afterUninstall = readFileSync(configPath, 'utf8');
+    expect(afterUninstall).toContain('my-custom-concord');
+  });
+
+  it('reports error when Antigravity config file cannot be read', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-err-'));
+    const configDir = join(home, '.gemini', 'config');
+    mkdirSync(configDir, { recursive: true });
+    // Making mcp_config.json a directory causes readFileSync to throw EISDIR
+    mkdirSync(join(configDir, 'mcp_config.json'));
+
+    const env = { HOME: home, ANTIGRAVITY_AGENT: '1' };
+    const report = statusGlobalAdapters(env);
+    expect(report.find((entry) => entry.harness === 'antigravity')?.status).toBe('error');
   });
 });

@@ -14,7 +14,12 @@ import {
   installGooseMcpConfig,
   uninstallGooseConfig,
 } from '../goose-config.js';
-import { hasMcpServer, removeMcpServer, upsertMcpServer } from '../mcp-config.js';
+import {
+  hasMcpServer,
+  isConcordServerOwned,
+  removeMcpServer,
+  upsertMcpServer,
+} from '../mcp-config.js';
 import {
   cursorTarget,
   hasConcordManifest,
@@ -534,11 +539,25 @@ function statusAntigravity(env: NodeJS.ProcessEnv, repoRoot?: string): AdapterRe
   const workspaceMcpPath =
     repoRoot === undefined ? undefined : join(repoRoot, '.agents', 'mcp_config.json');
   const globalMcpPath = join(userHome(env), '.gemini', 'config', 'mcp_config.json');
-  const hasWorkspace =
-    workspaceMcpPath !== undefined &&
-    existsSync(workspaceMcpPath) &&
-    hasMcpServer(readFileSync(workspaceMcpPath, 'utf8'));
-  const hasGlobal = existsSync(globalMcpPath) && hasMcpServer(readFileSync(globalMcpPath, 'utf8'));
+  let hasWorkspace = false;
+  let hasGlobal = false;
+  try {
+    if (workspaceMcpPath !== undefined && existsSync(workspaceMcpPath)) {
+      hasWorkspace = hasMcpServer(readFileSync(workspaceMcpPath, 'utf8'));
+    }
+    if (existsSync(globalMcpPath)) {
+      hasGlobal = hasMcpServer(readFileSync(globalMcpPath, 'utf8'));
+    }
+  } catch (error) {
+    return {
+      harness: config.name,
+      detected: true,
+      status: 'error',
+      monitor: config.monitor.kind,
+      capabilities: [],
+      detail: `Failed to read Antigravity configuration: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
   const installed = hasWorkspace || hasGlobal;
 
   return {
@@ -663,9 +682,18 @@ export function installGlobalAdapters(
       existsSync(join(userHome(env), '.gemini', 'config'));
     if (!detected) return;
     const path = join(userHome(env), '.gemini', 'config', 'mcp_config.json');
-    const existing = existsSync(path) ? readFileSync(path, 'utf8') : undefined;
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, upsertMcpServer(existing));
+    if (existsSync(path)) {
+      const existing = readFileSync(path, 'utf8');
+      if (hasMcpServer(existing) && !isConcordServerOwned(existing)) {
+        // User has a custom concord server entry - preserve it!
+        return;
+      }
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, upsertMcpServer(existing));
+    } else {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, upsertMcpServer(undefined));
+    }
   });
 
   const report = statusGlobalAdapters(env, repoRoot, moduleUrl, isEphemeral).map((entry) => {
@@ -709,7 +737,7 @@ export function uninstallGlobalAdapters(env: NodeJS.ProcessEnv = process.env): A
   if (existsSync(antigravityMcp)) {
     try {
       const existing = readFileSync(antigravityMcp, 'utf8');
-      if (hasMcpServer(existing)) {
+      if (hasMcpServer(existing) && isConcordServerOwned(existing)) {
         writeFileSync(antigravityMcp, removeMcpServer(existing));
       }
     } catch {

@@ -36,10 +36,12 @@ interface Registration {
 
 /** A user-level file global mode owns part of, for one harness. */
 interface UserFile {
-  /** Nothing is written unless this harness command is installed. */
-  readonly executable: string;
+  /** If provided, this harness command must be installed unless isDetected is provided. */
+  readonly executable?: string | undefined;
+  /** Custom detection function for harnesses that can be detected without CLI on PATH. */
+  readonly isDetected?: ((env: NodeJS.ProcessEnv) => boolean) | undefined;
   /** Set for an MCP registration, which `--no-mcp` skips. */
-  readonly registration?: Registration;
+  readonly registration?: Registration | undefined;
   readonly path: (env: NodeJS.ProcessEnv) => string;
   readonly install: (existing: string | undefined, path: string) => string;
   readonly uninstall: (existing: string) => string;
@@ -55,16 +57,32 @@ function antigravityConfigDir(env: NodeJS.ProcessEnv): string {
   return join(userHome(env), '.gemini', 'config');
 }
 
+function isAntigravityDetected(env: NodeJS.ProcessEnv): boolean {
+  return (
+    executablePath('agy', env) !== undefined ||
+    env['ANTIGRAVITY_AGENT'] === '1' ||
+    existsSync(antigravityConfigDir(env))
+  );
+}
+
 function instructionFile(
   executable: string,
   path: (env: NodeJS.ProcessEnv) => string,
   header?: string,
+  isDetected?: (env: NodeJS.ProcessEnv) => boolean,
 ): UserFile {
   return {
     executable,
+    ...(isDetected !== undefined ? { isDetected } : {}),
     path,
     install: (existing) => upsertBlock(existing ?? header ?? '', CONCORD_GLOBAL_INSTRUCTIONS),
-    uninstall: removeBlock,
+    uninstall: (existing) => {
+      const rest = removeBlock(existing);
+      if (rest.trim() === header?.trim()) {
+        return '';
+      }
+      return rest;
+    },
   };
 }
 
@@ -82,6 +100,7 @@ const USER_FILES: readonly UserFile[] = [
     'agy',
     (env) => join(antigravityConfigDir(env), 'rules', 'concord.md'),
     ANTIGRAVITY_RULE_HEADER,
+    isAntigravityDetected,
   ),
   {
     executable: 'gemini',
@@ -110,6 +129,7 @@ const USER_FILES: readonly UserFile[] = [
   },
   {
     executable: 'agy',
+    isDetected: isAntigravityDetected,
     registration: { id: 'antigravity', present: hasMcpServer },
     path: (env) => join(antigravityConfigDir(env), 'mcp_config.json'),
     install: (existing) => upsertMcpServer(existing),
@@ -128,6 +148,12 @@ function mayChange(
   return enable && (existing === undefined || !registration.present(existing));
 }
 
+function isFileDetected(file: UserFile, env: NodeJS.ProcessEnv): boolean {
+  if (file.isDetected !== undefined) return file.isDetected(env);
+  if (file.executable !== undefined) return executablePath(file.executable, env) !== undefined;
+  return false;
+}
+
 function applyFile(
   env: NodeJS.ProcessEnv,
   file: UserFile,
@@ -137,7 +163,7 @@ function applyFile(
 ): void {
   const path = file.path(env);
   const exists = existsSync(path);
-  if (enable ? executablePath(file.executable, env) === undefined : !exists) return;
+  if (enable ? !isFileDetected(file, env) : !exists) return;
   try {
     const existing = exists ? readFileSync(path, 'utf8') : undefined;
     const { registration } = file;

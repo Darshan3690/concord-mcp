@@ -43,7 +43,7 @@ describe('applyGlobalMode', () => {
     const on = applyGlobalMode(env, true);
 
     expect(on.warnings).toEqual([]);
-    expect(on.registrations).toEqual(['claude', 'cursor', 'gemini', 'grok', 'antigravity']);
+    expect(on.registrations).toEqual(['antigravity', 'claude', 'cursor', 'gemini', 'grok']);
     expect(read(join(env.HOME, '.claude', 'CLAUDE.md'))).toMatch(/^# My rules\n\n<!-- concord/u);
     for (const path of [
       join(env.HOME, '.codex', 'AGENTS.md'),
@@ -138,6 +138,25 @@ describe('registrations the user made', () => {
 
     applyGlobalMode(env, false, { registrations: on.registrations });
     expect([read(gemini), read(grok), read(cursor), read(antigravity)]).toEqual(before);
+  });
+
+  it('installs Antigravity global rules and MCP config when detected via ANTIGRAVITY_AGENT without agy executable', () => {
+    const env = machine([]);
+    const customEnv = { ...env, ANTIGRAVITY_AGENT: '1' };
+    const report = applyGlobalMode(customEnv, true);
+
+    expect(report.registrations).toEqual(['antigravity']);
+    const rulesPath = join(customEnv.HOME, '.gemini', 'config', 'rules', 'concord.md');
+    const mcpPath = join(customEnv.HOME, '.gemini', 'config', 'mcp_config.json');
+    expect(existsSync(rulesPath)).toBe(true);
+    expect(read(rulesPath)).toContain('trigger: always_on');
+    expect(existsSync(mcpPath)).toBe(true);
+    expect(read(mcpPath)).toContain('concord-mcp');
+
+    const off = applyGlobalMode(customEnv, false, { registrations: report.registrations });
+    expect(off.registrations).toEqual([]);
+    expect(existsSync(rulesPath)).toBe(false);
+    expect(read(mcpPath)).not.toContain('concord-mcp');
   });
 });
 

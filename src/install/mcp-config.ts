@@ -272,7 +272,7 @@ const CONCORD_PACKAGE_NAME = '@concord-ai/concord-mcp';
  * `@concord-ai/concord-mcp` optionally followed by a version. A path that
  * merely contains that text is the user's own wrapper and is left alone.
  */
-function isConcordWrittenEntry(entry: unknown): boolean {
+export function isConcordWrittenEntry(entry: unknown): boolean {
   const parsed = z
     .object({ command: z.string().optional(), args: z.array(z.string()).optional() })
     .loose()
@@ -282,6 +282,18 @@ function isConcordWrittenEntry(entry: unknown): boolean {
   // A non-string argument means this is not a shape Concord writes, so the
   // whole entry is treated as the user's own rather than parsed further.
   return (parsed.data.args ?? []).some((arg) => isPackageSpec(arg, CONCORD_PACKAGE_NAME));
+}
+
+/** Whether an existing MCP config string contains a Concord server entry written by Concord. */
+export function isConcordServerOwned(existing: string): boolean {
+  try {
+    if (existing.trim() === '') return false;
+    const config = mcpConfigSchema.parse(JSON.parse(existing));
+    const entry = config.mcpServers?.[CONCORD_SERVER_KEY];
+    return entry !== undefined && isConcordWrittenEntry(entry);
+  } catch {
+    return false;
+  }
 }
 
 /** Whether `arg` is exactly `name`, or `name@version` — not a path containing it. */

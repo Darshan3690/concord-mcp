@@ -13,7 +13,7 @@ describe('grokMonitorNudge', () => {
     const nudge = grokMonitorNudge(stop({ backgroundTasks: [] }), AGENT);
     expect(nudge).toContain(grokMonitorCommand(AGENT));
     expect(grokMonitorCommand(AGENT)).toBe(
-      'concord inbox watch --provider grok --agent grok:1094f0e0',
+      'concord inbox watch --agent grok:1094f0e0 --provider grok',
     );
   });
 

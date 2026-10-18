@@ -26,7 +26,7 @@ const grokStopSchema = z.object({
 
 /** The monitor command for this agent. Grok's monitor tool does not pass GROK_SESSION_ID. */
 export function grokMonitorCommand(agentId: string): string {
-  return `${MONITOR_COMMAND} --provider grok --agent ${agentId}`;
+  return `${MONITOR_COMMAND} --agent ${agentId} --provider grok`;
 }
 
 /**

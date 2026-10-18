@@ -9,11 +9,11 @@ command becomes a conversation notification and can wake a new turn. Concord's
 generated AGENTS instructions tell Grok to start one persistent monitor for:
 
 ```bash
-concord inbox watch --provider grok --agent <agent-id>
+concord inbox watch --agent grok:<id> --provider grok
 ```
 
-Pass the agent id explicitly: Grok's monitor tool does not give the process
-`GROK_SESSION_ID`, so the watcher cannot work out the session on its own.
+Pass the agent id explicitly: Grok's `monitor` does not give the command
+`GROK_SESSION_ID`, so Concord cannot otherwise tell which session is watching.
 
 That is the preferred idle-delivery path. Grok has no plugin monitor that starts
 by itself, and its SessionStart hook output never reaches the model, so the

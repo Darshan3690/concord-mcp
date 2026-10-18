@@ -12,13 +12,15 @@ generated AGENTS instructions tell Grok to start one persistent monitor for:
 concord inbox watch --agent grok:<id> --provider grok
 ```
 
-The plugin's SessionStart hook prints this command with the session's id filled
-in. Keep `--agent`: Grok's `monitor` does not pass `GROK_SESSION_ID` to the
-command, so Concord cannot otherwise tell which session is watching.
+Pass the agent id explicitly: Grok's `monitor` does not give the command
+`GROK_SESSION_ID`, so Concord cannot otherwise tell which session is watching.
 
-That is the preferred idle-delivery path. Grok's passive SessionStart hook cannot
-invoke a model tool itself, so the agent starts the monitor once per session;
-hooks remain the fallback until it does. Avoid duplicate monitors.
+That is the preferred idle-delivery path. Grok has no plugin monitor that starts
+by itself, and its SessionStart hook output never reaches the model, so the
+agent has to start the monitor. When a turn ends with no Concord monitor among
+the session's background tasks, the Stop hook keeps the turn open once and
+gives the agent the exact command, agent id included. Hooks remain the fallback
+until the monitor runs. Avoid duplicate monitors.
 
 Check the result with `concord adapters doctor` and `grok plugin details
 concord-relay`.

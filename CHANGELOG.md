@@ -22,9 +22,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Uninstalling no longer breaks Codex.** `concord adapters uninstall` left
   behind the `[mcp_servers.concord.tools.*]` tables Codex writes when a tool is
-  always-approved, and Codex then refused to start with `invalid transport in
-mcp_servers.concord`. Every `mcp_servers.concord` table is now removed (#227,
-  #228).
+  always-approved, and Codex then refused to start with an "invalid transport"
+  error. Every `mcp_servers.concord` table is now removed (#227, #228).
 - **Grok sessions start the Concord monitor.** Grok's Stop hook now asks the
   agent to start the persistent inbox monitor when none is running (#215).
 - **Monitor commands pass `--agent`.** Grok's `monitor` tool does not pass the

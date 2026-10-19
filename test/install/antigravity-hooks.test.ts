@@ -1,11 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import {
   ANTIGRAVITY_HOOKS,
   hasAntigravityHooks,
+  HooksConfigParseError,
   installAntigravityHooks,
   installGlobalAntigravityHooks,
   removeAntigravityHooks,
@@ -13,14 +15,16 @@ import {
   upsertAntigravityHooks,
 } from '../../src/install/antigravity-hooks.js';
 
+const hooksConfigSchema = z.record(z.string(), z.record(z.string(), z.unknown()));
+
 describe('antigravity hooks', () => {
   it('upserts concord hooks into an empty config', () => {
     const output = upsertAntigravityHooks(undefined);
-    const parsed = JSON.parse(output);
-    expect(parsed.concord).toBeDefined();
-    expect(parsed.concord.SessionStart).toEqual(ANTIGRAVITY_HOOKS.SessionStart);
-    expect(parsed.concord.PreInvocation).toEqual(ANTIGRAVITY_HOOKS.PreInvocation);
-    expect(parsed.concord.Stop).toEqual(ANTIGRAVITY_HOOKS.Stop);
+    const parsed = hooksConfigSchema.parse(JSON.parse(output));
+    expect(parsed['concord']).toBeDefined();
+    expect(parsed['concord']?.['SessionStart']).toEqual(ANTIGRAVITY_HOOKS.SessionStart);
+    expect(parsed['concord']?.['PreInvocation']).toEqual(ANTIGRAVITY_HOOKS.PreInvocation);
+    expect(parsed['concord']?.['Stop']).toEqual(ANTIGRAVITY_HOOKS.Stop);
     expect(hasAntigravityHooks(output)).toBe(true);
   });
 
@@ -31,9 +35,9 @@ describe('antigravity hooks', () => {
       },
     });
     const output = upsertAntigravityHooks(existing);
-    const parsed = JSON.parse(output);
+    const parsed = hooksConfigSchema.parse(JSON.parse(output));
     expect(parsed['lint-checker']).toBeDefined();
-    expect(parsed.concord).toBeDefined();
+    expect(parsed['concord']).toBeDefined();
   });
 
   it('removes concord hooks while leaving other hooks intact', () => {
@@ -44,10 +48,16 @@ describe('antigravity hooks', () => {
       },
     });
     const removed = removeAntigravityHooks(existing);
-    const parsed = JSON.parse(removed);
-    expect(parsed.concord).toBeUndefined();
+    const parsed = hooksConfigSchema.parse(JSON.parse(removed));
+    expect(parsed['concord']).toBeUndefined();
     expect(parsed['other-hook']).toBeDefined();
     expect(hasAntigravityHooks(removed)).toBe(false);
+  });
+
+  it('throws HooksConfigParseError on invalid JSON', () => {
+    expect(() => upsertAntigravityHooks('{ not valid json')).toThrow(HooksConfigParseError);
+    expect(() => removeAntigravityHooks('{ not valid json')).toThrow(HooksConfigParseError);
+    expect(hasAntigravityHooks('{ not valid json')).toBe(false);
   });
 
   it('installs hooks into .agents/hooks.json in a repo root', () => {
@@ -59,6 +69,18 @@ describe('antigravity hooks', () => {
     expect(existsSync(filePath)).toBe(true);
     const content = readFileSync(filePath, 'utf8');
     expect(hasAntigravityHooks(content)).toBe(true);
+  });
+
+  it('leaves corrupted hooks.json untouched and reports the error during install', () => {
+    const root = mkdtempSync(join(tmpdir(), 'concord-ag-hooks-corrupt-'));
+    const relPath = join('.agents', 'hooks.json');
+    const filePath = join(root, relPath);
+    const broken = '{ invalid hooks json';
+    installAntigravityHooks(root);
+    writeFileSync(filePath, broken);
+
+    expect(() => installAntigravityHooks(root)).toThrow(HooksConfigParseError);
+    expect(readFileSync(filePath, 'utf8')).toBe(broken);
   });
 
   it('manages global antigravity hooks', () => {

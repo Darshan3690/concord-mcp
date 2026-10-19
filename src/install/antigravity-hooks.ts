@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { z } from 'zod';
 
 import { userHome } from '../config/paths.js';
 
@@ -25,22 +26,48 @@ export const ANTIGRAVITY_HOOKS = {
 
 export const ANTIGRAVITY_HOOK_KEY = 'concord';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+const hooksConfigSchema = z.record(z.string(), z.record(z.string(), z.unknown()));
+
+const antigravityHooksCheckSchema = z
+  .object({
+    concord: z
+      .object({
+        SessionStart: z.array(z.object({ command: z.string() }).loose()),
+        PreInvocation: z.array(z.object({ command: z.string() }).loose()),
+      })
+      .loose(),
+  })
+  .loose();
+
+/**
+ * Thrown when an existing hooks.json file cannot be parsed. The file is left
+ * untouched rather than overwritten.
+ */
+export class HooksConfigParseError extends Error {
+  constructor(
+    readonly path: string,
+    problem = 'is not valid JSON',
+  ) {
+    super(`${path} ${problem} — fix or remove it, then re-run.`);
+    this.name = 'HooksConfigParseError';
+  }
 }
 
 /**
  * Idempotently add or update Concord's lifecycle hooks in an Antigravity hooks.json.
- * Any other named hook entries are preserved.
+ * Any other named hook entries are preserved. Throws HooksConfigParseError on syntax error.
  */
-export function upsertAntigravityHooks(existing: string | undefined): string {
-  let parsed: Record<string, unknown> = {};
+export function upsertAntigravityHooks(
+  existing: string | undefined,
+  path = '.agents/hooks.json',
+): string {
+  let parsed: z.infer<typeof hooksConfigSchema> = {};
   if (existing !== undefined && existing.trim() !== '') {
     try {
-      const data: unknown = JSON.parse(existing);
-      if (isRecord(data)) parsed = { ...data };
+      const raw: unknown = JSON.parse(existing);
+      parsed = hooksConfigSchema.parse(raw);
     } catch {
-      // Malformed json replaced with clean object containing our hooks.
+      throw new HooksConfigParseError(path);
     }
   }
 
@@ -55,17 +82,20 @@ export function upsertAntigravityHooks(existing: string | undefined): string {
 /**
  * Remove Concord's hooks from an Antigravity hooks.json string, preserving any other hooks.
  */
-export function removeAntigravityHooks(existing: string): string {
+export function removeAntigravityHooks(
+  existing: string,
+  path = '.agents/hooks.json',
+): string {
   if (existing.trim() === '') return '{}\n';
   try {
-    const data: unknown = JSON.parse(existing);
-    if (!isRecord(data)) return '{}\n';
+    const raw: unknown = JSON.parse(existing);
+    const parsed = hooksConfigSchema.parse(raw);
     const remaining = Object.fromEntries(
-      Object.entries(data).filter(([key]) => key !== ANTIGRAVITY_HOOK_KEY),
+      Object.entries(parsed).filter(([key]) => key !== ANTIGRAVITY_HOOK_KEY),
     );
     return `${JSON.stringify(remaining, null, 2)}\n`;
   } catch {
-    return existing;
+    throw new HooksConfigParseError(path);
   }
 }
 
@@ -75,13 +105,12 @@ export function removeAntigravityHooks(existing: string): string {
 export function hasAntigravityHooks(existing: string): boolean {
   try {
     if (existing.trim() === '') return false;
-    const data: unknown = JSON.parse(existing);
-    if (!isRecord(data)) return false;
-    const concord = data[ANTIGRAVITY_HOOK_KEY];
-    if (!isRecord(concord)) return false;
+    const raw: unknown = JSON.parse(existing);
+    const parsed = antigravityHooksCheckSchema.safeParse(raw);
     return (
-      Array.isArray(concord['PreInvocation']) &&
-      Array.isArray(concord['SessionStart'])
+      parsed.success &&
+      parsed.data.concord.SessionStart.length > 0 &&
+      parsed.data.concord.PreInvocation.length > 0
     );
   } catch {
     return false;
@@ -95,7 +124,7 @@ export function installAntigravityHooks(repoRoot: string): string {
   const relPath = join('.agents', 'hooks.json');
   const fullPath = join(repoRoot, relPath);
   const existing = existsSync(fullPath) ? readFileSync(fullPath, 'utf8') : undefined;
-  const updated = upsertAntigravityHooks(existing);
+  const updated = upsertAntigravityHooks(existing, relPath);
 
   mkdirSync(dirname(fullPath), { recursive: true });
   writeFileSync(fullPath, updated);
@@ -115,7 +144,7 @@ export function globalAntigravityHooksPath(env: NodeJS.ProcessEnv = process.env)
 export function installGlobalAntigravityHooks(env: NodeJS.ProcessEnv = process.env): string {
   const path = globalAntigravityHooksPath(env);
   const existing = existsSync(path) ? readFileSync(path, 'utf8') : undefined;
-  const updated = upsertAntigravityHooks(existing);
+  const updated = upsertAntigravityHooks(existing, path);
 
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, updated, { mode: 0o600 });

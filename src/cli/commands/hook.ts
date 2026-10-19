@@ -17,7 +17,13 @@ import type { TelemetryRecorder } from '../../telemetry/events.js';
 import { sessionStartIdentity } from '../agent-identity.js';
 import { openContext } from '../context.js';
 import { checkFileOverlaps } from './check.js';
-import { decideCloudPreToolUse, handleCloudSessionStart } from './cloud-hooks.js';
+import {
+  decideCloudPreToolUse,
+  handleCloudAntigravityPreInvocation,
+  handleCloudAntigravitySessionStart,
+  handleCloudAntigravityStop,
+  handleCloudSessionStart,
+} from './cloud-hooks.js';
 import { cloudAccess, HOOK_TIMEOUT_MS } from './cloud-inbox.js';
 import { drainInbox, registerPullEndpoint } from './inbox.js';
 import { sessionStartMessage } from './session-start-message.js';
@@ -267,10 +273,17 @@ export function registerHookCommand(program: Command, telemetry?: TelemetryRecor
       if (access.kind === 'unusable') {
         // Never a local workspace in its place, and never a blocked edit or session.
         process.stderr.write(`Concord Cloud could not be reached: ${access.reason}\n`);
+        if (options.client === 'antigravity') {
+          if (event === 'session-start' || event === 'pre-invocation') {
+            process.stdout.write(`${JSON.stringify({ injectSteps: [] })}\n`);
+          } else if (event === 'stop') {
+            process.stdout.write(`${JSON.stringify({})}\n`);
+          }
+        }
         return;
       }
       if (access.kind === 'cloud') {
-        await runCloudHook(access.runtime, event);
+        await runCloudHook(access.runtime, event, options.client);
         return;
       }
 
@@ -336,7 +349,33 @@ export function registerHookCommand(program: Command, telemetry?: TelemetryRecor
  * session: a cloud that cannot be reached is said once, and the edit or the
  * session goes ahead.
  */
-async function runCloudHook(runtime: CloudRuntime, event: string): Promise<void> {
+async function runCloudHook(
+  runtime: CloudRuntime,
+  event: string,
+  client?: string,
+): Promise<void> {
+  if (client === 'antigravity') {
+    const input = readStdin();
+    if (event === 'session-start') {
+      const result = await handleCloudAntigravitySessionStart(runtime, input);
+      process.stdout.write(`${result.output}\n`);
+      return;
+    }
+    if (event === 'pre-invocation') {
+      const result = await handleCloudAntigravityPreInvocation(runtime, input);
+      process.stdout.write(`${result.output}\n`);
+      return;
+    }
+    if (event === 'stop') {
+      const result = await handleCloudAntigravityStop(runtime, input);
+      process.stdout.write(`${result.output}\n`);
+      return;
+    }
+    process.stderr.write(`Unknown hook event for antigravity: ${event}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
   if (event === 'session-start') {
     const message = await handleCloudSessionStart(runtime, readStdin()).then(
       (result) => result.message,

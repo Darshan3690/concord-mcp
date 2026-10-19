@@ -224,6 +224,10 @@ function writeMcpConfig(repoRoot: string, relPath: string): string {
   const fullPath = join(repoRoot, relPath);
   const existing = existsSync(fullPath) ? readFileSync(fullPath, 'utf8') : undefined;
 
+  if (existing !== undefined && hasMcpServer(existing) && !isConcordServerOwned(existing)) {
+    return relPath;
+  }
+
   let updated: string;
   try {
     const extraEnv =

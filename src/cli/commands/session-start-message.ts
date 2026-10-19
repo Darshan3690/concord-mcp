@@ -31,14 +31,14 @@ export function sessionStartMessage(agentId: string, others: readonly RosterLine
   ].join('\n');
 }
 
-/** Antigravity's MCP server cannot see the session, so the id must be passed explicitly. */
+/** Antigravity's MCP server cannot see the session, so the id must be passed explicitly on writes. */
 export function antigravitySessionStartMessage(
   agentId: string,
   others: readonly RosterLine[],
 ): string {
   return [
     `Concord: this session is agent \`${agentId}\`. Pass agent_id: "${agentId}" on every ` +
-      'Concord tool call (start_work, inspect_work, update_work, transfer_work, finish_work). ' +
+      'write call (start_work, update_work, transfer_work, finish_work). ' +
       'The MCP server cannot see your session, so it cannot fill this in for you.',
     'Messages from other agents in this workspace are delivered into your turns automatically; ' +
       'you never need to poll for them.',

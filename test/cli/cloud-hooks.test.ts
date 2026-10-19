@@ -262,6 +262,10 @@ describe('cloud hooks', () => {
       expect(parsed.injectSteps[0]?.systemMessage).toContain(result.agentId);
       expect(parsed.injectSteps[0]?.systemMessage).toContain('codex:bbbb2222');
       expect(parsed.injectSteps[0]?.systemMessage).toContain('agent_id');
+      expect(parsed.injectSteps[0]?.systemMessage).toContain(
+        'write call (start_work, update_work, transfer_work, finish_work)',
+      );
+      expect(parsed.injectSteps[0]?.systemMessage).not.toContain('inspect_work');
     });
 
     it('returns error ephemeral message when conversationId is missing', async () => {

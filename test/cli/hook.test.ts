@@ -172,6 +172,10 @@ describe('Antigravity hook handlers', () => {
       expect(output.injectSteps[0]?.systemMessage).toContain(result.agentId);
       expect(output.injectSteps[0]?.systemMessage).toContain('agent_id');
       expect(output.injectSteps[0]?.systemMessage).toContain('cannot see your session');
+      expect(output.injectSteps[0]?.systemMessage).toContain(
+        'write call (start_work, update_work, transfer_work, finish_work)',
+      );
+      expect(output.injectSteps[0]?.systemMessage).not.toContain('inspect_work');
     });
 
     it('returns error message when conversationId is missing', () => {

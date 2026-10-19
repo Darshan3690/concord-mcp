@@ -158,13 +158,17 @@ export function installGlobalAntigravityHooks(env: NodeJS.ProcessEnv = process.e
 export function uninstallGlobalAntigravityHooks(env: NodeJS.ProcessEnv = process.env): void {
   const path = globalAntigravityHooksPath(env);
   if (!existsSync(path)) return;
-  const existing = readFileSync(path, 'utf8');
-  const updated = removeAntigravityHooks(existing);
-  const trimmed = updated.trim();
-  if (trimmed === '{}' || trimmed === '') {
-    rmSync(path);
-  } else {
-    writeFileSync(path, updated, { mode: 0o600 });
-    if (process.platform !== 'win32') chmodSync(path, 0o600);
+  try {
+    const existing = readFileSync(path, 'utf8');
+    const updated = removeAntigravityHooks(existing, path);
+    const trimmed = updated.trim();
+    if (trimmed === '{}' || trimmed === '') {
+      rmSync(path);
+    } else {
+      writeFileSync(path, updated, { mode: 0o600 });
+      if (process.platform !== 'win32') chmodSync(path, 0o600);
+    }
+  } catch {
+    // Malformed hooks file is left untouched at the uninstall boundary.
   }
 }

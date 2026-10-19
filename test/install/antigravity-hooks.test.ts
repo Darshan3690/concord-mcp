@@ -1,11 +1,12 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
   ANTIGRAVITY_HOOKS,
+  globalAntigravityHooksPath,
   hasAntigravityHooks,
   HooksConfigParseError,
   installAntigravityHooks,
@@ -93,5 +94,20 @@ describe('antigravity hooks', () => {
 
     uninstallGlobalAntigravityHooks(env);
     expect(existsSync(path)).toBe(false);
+  });
+
+  it('leaves malformed global hooks untouched and does not throw during uninstall', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-ag-home-broken-'));
+    const env = { HOME: home, USERPROFILE: home };
+    const path = globalAntigravityHooksPath(env);
+    mkdirSync(dirname(path), { recursive: true });
+    const broken = '{ invalid hooks json';
+    writeFileSync(path, broken);
+
+    expect(() => {
+      uninstallGlobalAntigravityHooks(env);
+    }).not.toThrow();
+    expect(existsSync(path)).toBe(true);
+    expect(readFileSync(path, 'utf8')).toBe(broken);
   });
 });

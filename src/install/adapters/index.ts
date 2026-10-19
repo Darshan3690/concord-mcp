@@ -771,7 +771,11 @@ export function uninstallGlobalAdapters(env: NodeJS.ProcessEnv = process.env): A
       // Unreadable or malformed config is left untouched.
     }
   }
-  uninstallGlobalAntigravityHooks(env);
+  try {
+    uninstallGlobalAntigravityHooks(env);
+  } catch {
+    // Malformed or unreadable hooks config is left untouched.
+  }
   const statePath = join(userHome(env), '.concord', 'adapters.json');
   if (existsSync(statePath)) rmSync(statePath);
   return statusGlobalAdapters(env);

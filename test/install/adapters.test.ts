@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -409,5 +409,23 @@ describe('global harness adapters', () => {
     const afterUninstall = readFileSync(configPath, 'utf8');
     expect(afterUninstall).toContain('--custom-port');
     expect(afterUninstall).toContain('CUSTOM_ENV');
+  });
+
+  it('finishes global uninstall and removes state even when Antigravity hooks are malformed', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-ag-malformed-uninstall-'));
+    const env = { HOME: home, USERPROFILE: home };
+    const hooksPath = join(home, '.gemini', 'config', 'hooks.json');
+    mkdirSync(dirname(hooksPath), { recursive: true });
+    const broken = '{ malformed hooks json';
+    writeFileSync(hooksPath, broken);
+
+    const statePath = join(home, '.concord', 'adapters.json');
+    mkdirSync(dirname(statePath), { recursive: true });
+    writeFileSync(statePath, '{}');
+
+    const report = uninstallGlobalAdapters(env);
+    expect(report).toBeDefined();
+    expect(existsSync(statePath)).toBe(false);
+    expect(readFileSync(hooksPath, 'utf8')).toBe(broken);
   });
 });

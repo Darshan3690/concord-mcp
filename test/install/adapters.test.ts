@@ -428,4 +428,25 @@ describe('global harness adapters', () => {
     expect(existsSync(statePath)).toBe(false);
     expect(readFileSync(hooksPath, 'utf8')).toBe(broken);
   });
+
+  it('reports action_required with remaining hooks detail when hooks remain but MCP is not registered', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-ag-hooks-remaining-'));
+    const env = { HOME: home, USERPROFILE: home, ANTIGRAVITY_AGENT: '1' };
+    const hooksPath = join(home, '.gemini', 'config', 'hooks.json');
+    mkdirSync(dirname(hooksPath), { recursive: true });
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        concord: {
+          SessionStart: [{ command: 'concord hook session-start --client antigravity' }],
+          PreInvocation: [{ command: 'concord hook pre-invocation --client antigravity' }],
+        },
+      }),
+    );
+
+    const report = statusGlobalAdapters(env);
+    const agEntry = report.find((entry) => entry.harness === 'antigravity');
+    expect(agEntry?.status).toBe('action_required');
+    expect(agEntry?.detail).toContain('Concord lifecycle hooks remain installed');
+  });
 });

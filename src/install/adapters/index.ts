@@ -16,6 +16,8 @@ import {
   uninstallGooseConfig,
 } from '../goose-config.js';
 import {
+  globalAntigravityHooksPath,
+  hasAntigravityHooks,
   installGlobalAntigravityHooks,
   uninstallGlobalAntigravityHooks,
 } from '../antigravity-hooks.js';
@@ -544,14 +546,25 @@ function statusAntigravity(env: NodeJS.ProcessEnv, repoRoot?: string): AdapterRe
   const workspaceMcpPath =
     repoRoot === undefined ? undefined : join(repoRoot, '.agents', 'mcp_config.json');
   const globalMcpPath = join(userHome(env), '.gemini', 'config', 'mcp_config.json');
+  const workspaceHooksPath =
+    repoRoot === undefined ? undefined : join(repoRoot, '.agents', 'hooks.json');
+  const globalHooksPath = globalAntigravityHooksPath(env);
   let hasWorkspace = false;
   let hasGlobal = false;
+  let hasWorkspaceHooks = false;
+  let hasGlobalHooks = false;
   try {
     if (workspaceMcpPath !== undefined && existsSync(workspaceMcpPath)) {
       hasWorkspace = hasMcpServer(readFileSync(workspaceMcpPath, 'utf8'));
     }
     if (existsSync(globalMcpPath)) {
       hasGlobal = hasMcpServer(readFileSync(globalMcpPath, 'utf8'));
+    }
+    if (workspaceHooksPath !== undefined && existsSync(workspaceHooksPath)) {
+      hasWorkspaceHooks = hasAntigravityHooks(readFileSync(workspaceHooksPath, 'utf8'));
+    }
+    if (existsSync(globalHooksPath)) {
+      hasGlobalHooks = hasAntigravityHooks(readFileSync(globalHooksPath, 'utf8'));
     }
   } catch (error) {
     return {
@@ -564,6 +577,7 @@ function statusAntigravity(env: NodeJS.ProcessEnv, repoRoot?: string): AdapterRe
     };
   }
   const installed = hasWorkspace || hasGlobal;
+  const hooksRemaining = !installed && (hasWorkspaceHooks || hasGlobalHooks);
 
   return {
     harness: config.name,
@@ -573,7 +587,9 @@ function statusAntigravity(env: NodeJS.ProcessEnv, repoRoot?: string): AdapterRe
     capabilities: installed ? [...config.installedCapabilities] : ['pull', 'busy'],
     detail: installed
       ? config.installedDetail
-      : 'Concord MCP server is not yet registered in .agents/mcp_config.json or ~/.gemini/config/mcp_config.json.',
+      : hooksRemaining
+        ? 'Concord lifecycle hooks remain installed, but MCP server is not registered.'
+        : 'Concord MCP server is not yet registered in .agents/mcp_config.json or ~/.gemini/config/mcp_config.json.',
   };
 }
 

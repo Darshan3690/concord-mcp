@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import {
@@ -109,5 +109,33 @@ describe('antigravity hooks', () => {
     }).not.toThrow();
     expect(existsSync(path)).toBe(true);
     expect(readFileSync(path, 'utf8')).toBe(broken);
+  });
+
+  it('reports failed write to stderr during uninstall and does not crash', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-ag-home-fail-'));
+    const env = { HOME: home, USERPROFILE: home };
+    const path = globalAntigravityHooksPath(env);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        concord: ANTIGRAVITY_HOOKS,
+        'other-plugin': { Stop: [] },
+      }),
+    );
+    chmodSync(path, 0o444);
+
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      expect(() => {
+        uninstallGlobalAntigravityHooks(env);
+      }).not.toThrow();
+      expect(stderrSpy).toHaveBeenCalled();
+      const lastCall = stderrSpy.mock.calls[0]?.[0];
+      expect(String(lastCall)).toContain('failed to remove Antigravity hooks');
+    } finally {
+      chmodSync(path, 0o666);
+      stderrSpy.mockRestore();
+    }
   });
 });

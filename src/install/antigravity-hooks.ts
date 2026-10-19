@@ -82,10 +82,7 @@ export function upsertAntigravityHooks(
 /**
  * Remove Concord's hooks from an Antigravity hooks.json string, preserving any other hooks.
  */
-export function removeAntigravityHooks(
-  existing: string,
-  path = '.agents/hooks.json',
-): string {
+export function removeAntigravityHooks(existing: string, path = '.agents/hooks.json'): string {
   if (existing.trim() === '') return '{}\n';
   try {
     const raw: unknown = JSON.parse(existing);

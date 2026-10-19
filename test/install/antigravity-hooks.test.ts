@@ -1,4 +1,11 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -112,6 +119,7 @@ describe('antigravity hooks', () => {
   });
 
   it('reports failed write to stderr during uninstall and does not crash', () => {
+    if (process.getuid?.() === 0) return;
     const home = mkdtempSync(join(tmpdir(), 'concord-ag-home-fail-'));
     const env = { HOME: home, USERPROFILE: home };
     const path = globalAntigravityHooksPath(env);

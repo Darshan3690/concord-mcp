@@ -353,13 +353,17 @@ describe('global harness adapters', () => {
 
     const env = { HOME: home, ANTIGRAVITY_AGENT: '1' };
     const installReport = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
-    expect(installReport.find((entry) => entry.harness === 'antigravity')?.status).toBe('installed');
+    expect(installReport.find((entry) => entry.harness === 'antigravity')?.status).toBe(
+      'installed',
+    );
 
     const afterInstall = readFileSync(configPath, 'utf8');
     expect(afterInstall).toContain('my-custom-concord');
 
     const uninstallReport = uninstallGlobalAdapters(env);
-    expect(uninstallReport.find((entry) => entry.harness === 'antigravity')?.status).toBe('installed');
+    expect(uninstallReport.find((entry) => entry.harness === 'antigravity')?.status).toBe(
+      'installed',
+    );
 
     const afterUninstall = readFileSync(configPath, 'utf8');
     expect(afterUninstall).toContain('my-custom-concord');
@@ -397,14 +401,18 @@ describe('global harness adapters', () => {
 
     const env = { HOME: home, ANTIGRAVITY_AGENT: '1' };
     const installReport = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
-    expect(installReport.find((entry) => entry.harness === 'antigravity')?.status).toBe('installed');
+    expect(installReport.find((entry) => entry.harness === 'antigravity')?.status).toBe(
+      'installed',
+    );
 
     const afterInstall = readFileSync(configPath, 'utf8');
     expect(afterInstall).toContain('--custom-port');
     expect(afterInstall).toContain('CUSTOM_ENV');
 
     const uninstallReport = uninstallGlobalAdapters(env);
-    expect(uninstallReport.find((entry) => entry.harness === 'antigravity')?.status).toBe('installed');
+    expect(uninstallReport.find((entry) => entry.harness === 'antigravity')?.status).toBe(
+      'installed',
+    );
 
     const afterUninstall = readFileSync(configPath, 'utf8');
     expect(afterUninstall).toContain('--custom-port');

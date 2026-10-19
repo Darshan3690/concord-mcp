@@ -19,7 +19,7 @@ import { renderInboxBody } from '../../domain/pull-inbox.js';
 import { sessionStartIdentity } from '../agent-identity.js';
 import { drainFromCloud, registerInCloud } from './cloud-inbox.js';
 import type { HookDecision, SessionStartResult } from './hook.js';
-import { sessionStartMessage } from './session-start-message.js';
+import { antigravitySessionStartMessage, sessionStartMessage } from './session-start-message.js';
 
 /**
  * The Claude Code hooks in a repository linked to Concord Cloud: the edit
@@ -181,11 +181,11 @@ export async function handleCloudAntigravitySessionStart(
         summary: agent.summary,
       }))
       .filter((peer) => peer.liveness !== 'archived');
-    const msg = sessionStartMessage(agentId, others);
+    const msg = antigravitySessionStartMessage(agentId, others);
     return {
       agentId,
       output: JSON.stringify({
-        injectSteps: [{ ephemeralMessage: msg }],
+        injectSteps: [{ systemMessage: msg }],
       }),
     };
   } catch (error) {

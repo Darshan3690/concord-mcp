@@ -71,7 +71,7 @@ This project uses Concord MCP. Keep coordination to the five workflow tools:
   thread. Use \`update_work\` for durable progress and for live prompts/replies
   to another promptable workspace agent.
 - Incoming messages are automatically delivered into your turns via PreInvocation hooks.
-  You can also inspect or drain them manually with \`concord inbox drain --agent <agent_id>\`.
+  You can also inspect or drain them manually with \`concord inbox drain --provider antigravity --agent <agent_id>\`.
 - Use \`transfer_work\` for assignment, acceptance, decline, release,
   reassignment, evidence-bearing handoff offers, and reopening.
 - **Before finishing**, call \`finish_work\` once with the outcome, changed

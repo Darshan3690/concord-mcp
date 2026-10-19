@@ -213,6 +213,7 @@ describe('cloud hooks', () => {
     injectSteps: z.array(
       z.object({
         ephemeralMessage: z.string().optional(),
+        systemMessage: z.string().optional(),
         userMessage: z.string().optional(),
       }),
     ),
@@ -236,7 +237,7 @@ describe('cloud hooks', () => {
   }
 
   describe('Antigravity cloud hooks', () => {
-    it('registers session and injects ephemeral message with agent id', async () => {
+    it('registers session and injects system message with agent id', async () => {
       const runtime = runtimeWith([
         ['POST /v1/machines', () => ok({ machine: { id: 'm-uuid' } })],
         ['POST /v1/agents', () => ok({ agent: { id: 'a-uuid' } })],
@@ -258,8 +259,9 @@ describe('cloud hooks', () => {
       expect(result.agentId).toMatch(/^antigravity:[0-9a-f]{8}$/);
       const parsed = injectStepsSchema.parse(JSON.parse(result.output));
       expect(parsed.injectSteps).toHaveLength(1);
-      expect(parsed.injectSteps[0]?.ephemeralMessage).toContain(result.agentId);
-      expect(parsed.injectSteps[0]?.ephemeralMessage).toContain('codex:bbbb2222');
+      expect(parsed.injectSteps[0]?.systemMessage).toContain(result.agentId);
+      expect(parsed.injectSteps[0]?.systemMessage).toContain('codex:bbbb2222');
+      expect(parsed.injectSteps[0]?.systemMessage).toContain('agent_id');
     });
 
     it('returns error ephemeral message when conversationId is missing', async () => {

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
+  antigravityWorkspace,
   decidePreToolUse,
   handleAntigravityPreInvocation,
   handleAntigravitySessionStart,
@@ -143,6 +144,7 @@ describe('Antigravity hook handlers', () => {
     injectSteps: z.array(
       z.object({
         ephemeralMessage: z.string().optional(),
+        systemMessage: z.string().optional(),
         userMessage: z.string().optional(),
       }),
     ),
@@ -154,7 +156,7 @@ describe('Antigravity hook handlers', () => {
   });
 
   describe('handleAntigravitySessionStart', () => {
-    it('registers the agent and returns ephemeral message with agent id', () => {
+    it('registers the agent and returns persistent system message with agent id', () => {
       const payload = JSON.stringify({ conversationId: 'conv-test-123' });
       const result = handleAntigravitySessionStart(repos, payload);
 
@@ -167,7 +169,9 @@ describe('Antigravity hook handlers', () => {
 
       const output = injectStepsSchema.parse(JSON.parse(result.output));
       expect(output.injectSteps).toHaveLength(1);
-      expect(output.injectSteps[0]?.ephemeralMessage).toContain(result.agentId);
+      expect(output.injectSteps[0]?.systemMessage).toContain(result.agentId);
+      expect(output.injectSteps[0]?.systemMessage).toContain('agent_id');
+      expect(output.injectSteps[0]?.systemMessage).toContain('cannot see your session');
     });
 
     it('returns error message when conversationId is missing', () => {
@@ -248,3 +252,30 @@ describe('Antigravity hook handlers', () => {
   });
 });
 
+describe('antigravityWorkspace', () => {
+  it('extracts first workspacePath from payload', () => {
+    const payload = JSON.stringify({
+      conversationId: 'conv-1',
+      workspacePaths: ['/home/user/project', '/other'],
+    });
+    expect(antigravityWorkspace(payload)).toBe('/home/user/project');
+  });
+
+  it('falls back to cwd when workspacePaths is absent', () => {
+    const payload = JSON.stringify({ conversationId: 'conv-1' });
+    expect(antigravityWorkspace(payload)).toBe(process.cwd());
+  });
+
+  it('falls back to cwd when workspacePaths is empty', () => {
+    const payload = JSON.stringify({ conversationId: 'conv-1', workspacePaths: [] });
+    expect(antigravityWorkspace(payload)).toBe(process.cwd());
+  });
+
+  it('falls back to cwd on invalid JSON', () => {
+    expect(antigravityWorkspace('{ not json')).toBe(process.cwd());
+  });
+
+  it('falls back to cwd on empty input', () => {
+    expect(antigravityWorkspace('')).toBe(process.cwd());
+  });
+});

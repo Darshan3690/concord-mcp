@@ -26,7 +26,7 @@ import {
 } from './cloud-hooks.js';
 import { cloudAccess, HOOK_TIMEOUT_MS } from './cloud-inbox.js';
 import { drainInbox, registerPullEndpoint } from './inbox.js';
-import { sessionStartMessage } from './session-start-message.js';
+import { antigravitySessionStartMessage, sessionStartMessage } from './session-start-message.js';
 import type { CloudRuntime } from '../../cloud/runtime.js';
 
 /** The subset of Claude Code's PreToolUse payload we need: the edited file path.
@@ -148,13 +148,29 @@ export function handleSessionStart(
   return { agentId, message: sessionStartMessage(agentId, others) };
 }
 
+const antigravityPayloadSchema = z
+  .object({ workspacePaths: z.array(z.string()).optional() })
+  .loose();
+
+/** The workspace an Antigravity hook is for: its payload's first workspace path, else cwd. */
+export function antigravityWorkspace(rawJson: string): string {
+  try {
+    const raw: unknown = JSON.parse(rawJson);
+    const parsed = antigravityPayloadSchema.safeParse(raw);
+    return (parsed.success ? parsed.data.workspacePaths?.[0] : undefined) ?? process.cwd();
+  } catch {
+    return process.cwd();
+  }
+}
+
 /**
  * Handle Antigravity SessionStart hook: extracts conversationId, registers
- * presence, and returns an ephemeral intro message with the derived agent id.
+ * presence, and returns a persistent system message with the derived agent id.
  */
 export function handleAntigravitySessionStart(
   repos: Repositories,
   rawJson: string,
+  workspace: string = process.cwd(),
 ): { agentId: string | undefined; output: string } {
   const sessionId = hookSessionId(rawJson);
   if (sessionId === undefined) {
@@ -173,17 +189,17 @@ export function handleAntigravitySessionStart(
     origin: 'hook' as const,
   };
   const agentId = identity.agentId;
-  ensureAgentRegistered(repos, identity, process.cwd());
+  ensureAgentRegistered(repos, identity, workspace);
   registerPullEndpoint(repos, agentId, 'antigravity');
 
   const others = buildRoster(repos.agents.list(), Date.now()).filter(
     (entry) => entry.agentId !== agentId,
   );
-  const msg = sessionStartMessage(agentId, others);
+  const msg = antigravitySessionStartMessage(agentId, others);
   return {
     agentId,
     output: JSON.stringify({
-      injectSteps: [{ ephemeralMessage: msg }],
+      injectSteps: [{ systemMessage: msg }],
     }),
   };
 }
@@ -195,6 +211,7 @@ export function handleAntigravitySessionStart(
 export function handleAntigravityPreInvocation(
   repos: Repositories,
   rawJson: string,
+  workspace: string = process.cwd(),
 ): { output: string } {
   const sessionId = hookSessionId(rawJson);
   if (sessionId === undefined) {
@@ -206,7 +223,7 @@ export function handleAntigravityPreInvocation(
     origin: 'hook' as const,
   };
   const agentId = identity.agentId;
-  ensureAgentRegistered(repos, identity, process.cwd());
+  ensureAgentRegistered(repos, identity, workspace);
 
   const messages = drainInbox(repos, agentId, 'antigravity');
   if (messages.length === 0) {
@@ -269,11 +286,20 @@ export function registerHookCommand(program: Command, telemetry?: TelemetryRecor
     )
     .option('--client <client>', 'Client calling the hook (e.g. antigravity, claude)')
     .action(async (event, options) => {
-      const access = cloudAccess(process.cwd(), { timeoutMs: HOOK_TIMEOUT_MS });
+      // For Antigravity hooks, read stdin once and derive the workspace from
+      // the payload's workspacePaths.  Global hooks run with cwd set to
+      // ~/.gemini/config, so the payload is the only reliable source.
+      const isAntigravity = options.client === 'antigravity';
+      const antigravityInput = isAntigravity ? readStdin() : '';
+      const workspace = isAntigravity
+        ? antigravityWorkspace(antigravityInput)
+        : process.cwd();
+
+      const access = cloudAccess(workspace, { timeoutMs: HOOK_TIMEOUT_MS });
       if (access.kind === 'unusable') {
         // Never a local workspace in its place, and never a blocked edit or session.
         process.stderr.write(`Concord Cloud could not be reached: ${access.reason}\n`);
-        if (options.client === 'antigravity') {
+        if (isAntigravity) {
           if (event === 'session-start' || event === 'pre-invocation') {
             process.stdout.write(`${JSON.stringify({ injectSteps: [] })}\n`);
           } else if (event === 'stop') {
@@ -283,25 +309,24 @@ export function registerHookCommand(program: Command, telemetry?: TelemetryRecor
         return;
       }
       if (access.kind === 'cloud') {
-        await runCloudHook(access.runtime, event, options.client);
+        await runCloudHook(access.runtime, event, options.client, antigravityInput);
         return;
       }
 
-      if (options.client === 'antigravity') {
-        const repos = openContext(process.cwd()).repos;
-        const input = readStdin();
+      if (isAntigravity) {
+        const repos = openContext(workspace).repos;
         if (event === 'session-start') {
-          const result = handleAntigravitySessionStart(repos, input);
+          const result = handleAntigravitySessionStart(repos, antigravityInput, workspace);
           process.stdout.write(`${result.output}\n`);
           return;
         }
         if (event === 'pre-invocation') {
-          const result = handleAntigravityPreInvocation(repos, input);
+          const result = handleAntigravityPreInvocation(repos, antigravityInput, workspace);
           process.stdout.write(`${result.output}\n`);
           return;
         }
         if (event === 'stop') {
-          const result = handleAntigravityStop(repos, input);
+          const result = handleAntigravityStop(repos, antigravityInput);
           process.stdout.write(`${result.output}\n`);
           return;
         }
@@ -353,9 +378,10 @@ async function runCloudHook(
   runtime: CloudRuntime,
   event: string,
   client?: string,
+  antigravityInput = '',
 ): Promise<void> {
   if (client === 'antigravity') {
-    const input = readStdin();
+    const input = antigravityInput !== '' ? antigravityInput : readStdin();
     if (event === 'session-start') {
       const result = await handleCloudAntigravitySessionStart(runtime, input);
       process.stdout.write(`${result.output}\n`);

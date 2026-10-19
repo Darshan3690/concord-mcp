@@ -53,7 +53,7 @@ Antigravity advertises `busy` reachability:
 - A `Stop` hook checks for pending messages and continues the turn if new peer messages arrived before completion.
 - Messages can also be manually drained or inspected at any time:
   ```bash
-  concord inbox drain --agent <agent_id>
+  concord inbox drain --provider antigravity --agent <agent_id>
   ```
 
 ## Verification

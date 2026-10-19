@@ -53,11 +53,20 @@ function configuredHome(env: NodeJS.ProcessEnv): string | undefined {
  * passing the previous output back in is a no-op. Without `repoRoot` the entry
  * is a user-level one, which finds the repository from where it is started.
  */
-export function upsertMcpServer(existing: string | undefined, repoRoot?: string): string {
+export function upsertMcpServer(
+  existing: string | undefined,
+  repoRoot?: string,
+  extraEnv?: Record<string, string>,
+): string {
   const source: unknown =
     existing === undefined || existing.trim() === '' ? {} : JSON.parse(existing);
   const config = mcpConfigSchema.parse(source);
   const servers = config.mcpServers ?? {};
+
+  const env = {
+    ...(repoRoot === undefined ? {} : { CONCORD_REPO_ROOT: repoRoot }),
+    ...(extraEnv ?? {}),
+  };
 
   const next = {
     ...config,
@@ -65,7 +74,7 @@ export function upsertMcpServer(existing: string | undefined, repoRoot?: string)
       ...servers,
       [CONCORD_SERVER_KEY]: {
         command: CONCORD_SERVER_COMMAND,
-        ...(repoRoot === undefined ? {} : { env: { CONCORD_REPO_ROOT: repoRoot } }),
+        ...(Object.keys(env).length === 0 ? {} : { env }),
       },
     },
   };
@@ -217,7 +226,11 @@ function writeMcpConfig(repoRoot: string, relPath: string): string {
 
   let updated: string;
   try {
-    updated = upsertMcpServer(existing, repoRoot);
+    const extraEnv =
+      relPath === join('.agents', 'mcp_config.json')
+        ? { CONCORD_AGENT_KIND: 'antigravity' }
+        : undefined;
+    updated = upsertMcpServer(existing, repoRoot, extraEnv);
   } catch {
     throw new McpConfigParseError(relPath);
   }
@@ -287,9 +300,9 @@ export function isConcordWrittenEntry(entry: unknown): boolean {
     const isRunner = parsed.data.args.some((arg) => isPackageSpec(arg, CONCORD_PACKAGE_NAME));
     if (!isRunner) return false;
   }
-  // If the user specified custom environment variables (other than CONCORD_REPO_ROOT), it is custom.
+  // If the user specified custom environment variables (other than CONCORD_REPO_ROOT or CONCORD_AGENT_KIND), it is custom.
   const envKeys = Object.keys(parsed.data.env ?? {});
-  if (envKeys.some((key) => key !== 'CONCORD_REPO_ROOT')) {
+  if (envKeys.some((key) => key !== 'CONCORD_REPO_ROOT' && key !== 'CONCORD_AGENT_KIND')) {
     return false;
   }
   if (parsed.data.command === CONCORD_SERVER_COMMAND) return true;

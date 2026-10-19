@@ -1,0 +1,75 @@
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+import {
+  ANTIGRAVITY_HOOKS,
+  hasAntigravityHooks,
+  installAntigravityHooks,
+  installGlobalAntigravityHooks,
+  removeAntigravityHooks,
+  uninstallGlobalAntigravityHooks,
+  upsertAntigravityHooks,
+} from '../../src/install/antigravity-hooks.js';
+
+describe('antigravity hooks', () => {
+  it('upserts concord hooks into an empty config', () => {
+    const output = upsertAntigravityHooks(undefined);
+    const parsed = JSON.parse(output);
+    expect(parsed.concord).toBeDefined();
+    expect(parsed.concord.SessionStart).toEqual(ANTIGRAVITY_HOOKS.SessionStart);
+    expect(parsed.concord.PreInvocation).toEqual(ANTIGRAVITY_HOOKS.PreInvocation);
+    expect(parsed.concord.Stop).toEqual(ANTIGRAVITY_HOOKS.Stop);
+    expect(hasAntigravityHooks(output)).toBe(true);
+  });
+
+  it('preserves other existing hooks when upserting', () => {
+    const existing = JSON.stringify({
+      'lint-checker': {
+        PostToolUse: [{ matcher: 'run_command', hooks: [{ command: './lint.sh' }] }],
+      },
+    });
+    const output = upsertAntigravityHooks(existing);
+    const parsed = JSON.parse(output);
+    expect(parsed['lint-checker']).toBeDefined();
+    expect(parsed.concord).toBeDefined();
+  });
+
+  it('removes concord hooks while leaving other hooks intact', () => {
+    const existing = JSON.stringify({
+      concord: ANTIGRAVITY_HOOKS,
+      'other-hook': {
+        Stop: [{ command: './other.sh' }],
+      },
+    });
+    const removed = removeAntigravityHooks(existing);
+    const parsed = JSON.parse(removed);
+    expect(parsed.concord).toBeUndefined();
+    expect(parsed['other-hook']).toBeDefined();
+    expect(hasAntigravityHooks(removed)).toBe(false);
+  });
+
+  it('installs hooks into .agents/hooks.json in a repo root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'concord-ag-hooks-'));
+    const relPath = installAntigravityHooks(root);
+    expect(relPath).toBe(join('.agents', 'hooks.json'));
+
+    const filePath = join(root, relPath);
+    expect(existsSync(filePath)).toBe(true);
+    const content = readFileSync(filePath, 'utf8');
+    expect(hasAntigravityHooks(content)).toBe(true);
+  });
+
+  it('manages global antigravity hooks', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-ag-home-'));
+    const env = { HOME: home, USERPROFILE: home };
+
+    const path = installGlobalAntigravityHooks(env);
+    expect(existsSync(path)).toBe(true);
+    expect(hasAntigravityHooks(readFileSync(path, 'utf8'))).toBe(true);
+
+    uninstallGlobalAntigravityHooks(env);
+    expect(existsSync(path)).toBe(false);
+  });
+});

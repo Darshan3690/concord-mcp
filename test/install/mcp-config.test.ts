@@ -50,6 +50,12 @@ describe('upsertMcpServer', () => {
     expect(twice.split(CONCORD_SERVER_COMMAND).length - 1).toBe(1);
   });
 
+  it('supports extra environment variables such as CONCORD_AGENT_KIND', () => {
+    const out = upsertMcpServer(undefined, '/tmp/project', { CONCORD_AGENT_KIND: 'antigravity' });
+    expect(out).toContain('"CONCORD_AGENT_KIND": "antigravity"');
+    expect(out).toContain('"CONCORD_REPO_ROOT": "/tmp/project"');
+  });
+
   it('throws on malformed JSON rather than discarding it', () => {
     expect(() => upsertMcpServer('{ not json', '/tmp/project')).toThrow();
   });
@@ -74,6 +80,10 @@ describe('installMcpConfigs', () => {
       const escapedRoot = JSON.stringify(root).slice(1, -1);
       expect(content.includes(root) || content.includes(escapedRoot)).toBe(true);
     }
+    const antigravityConfig = JSON.parse(
+      readFileSync(join(root, '.agents', 'mcp_config.json'), 'utf8'),
+    );
+    expect(antigravityConfig.mcpServers.concord.env.CONCORD_AGENT_KIND).toBe('antigravity');
     const gemini = z
       .object({
         tools: z.object({ shell: z.object({ backgroundCompletionBehavior: z.string() }) }),

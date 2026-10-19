@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   decidePreToolUse,
+  handleAntigravityPreInvocation,
+  handleAntigravitySessionStart,
+  handleAntigravityStop,
   handleSessionStart,
   sessionStartIdentity,
 } from '../../src/cli/commands/hook.js';
@@ -9,6 +12,7 @@ import { openDatabase } from '../../src/db/connection.js';
 import { createRepositories, type Repositories } from '../../src/db/index.js';
 import { handleClaimWork } from '../../src/tools/claim-work.js';
 import { handleRegisterAgent } from '../../src/tools/register-agent.js';
+import { handleSendAgentMessage } from '../../src/tools/agent-messages.js';
 
 function preToolUse(filePath: string): string {
   return JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: filePath } });
@@ -127,3 +131,94 @@ describe('handleSessionStart', () => {
     expect(repos.agents.list()).toHaveLength(0);
   });
 });
+
+describe('Antigravity hook handlers', () => {
+  let repos: Repositories;
+  beforeEach(() => {
+    repos = createRepositories(openDatabase(':memory:'));
+  });
+
+  describe('handleAntigravitySessionStart', () => {
+    it('registers the agent and returns ephemeral message with agent id', () => {
+      const payload = JSON.stringify({ conversationId: 'conv-test-123' });
+      const result = handleAntigravitySessionStart(repos, payload);
+
+      expect(result.agentId).toMatch(/^antigravity:[0-9a-f]{8}$/);
+      expect(repos.agents.get(result.agentId!)).toBeDefined();
+      expect(repos.agentEndpoints.getByAgent(result.agentId!)).toBeDefined();
+
+      const output = JSON.parse(result.output);
+      expect(output.injectSteps).toHaveLength(1);
+      expect(output.injectSteps[0].ephemeralMessage).toContain(result.agentId);
+    });
+
+    it('returns error message when conversationId is missing', () => {
+      const result = handleAntigravitySessionStart(repos, '{}');
+      expect(result.agentId).toBeUndefined();
+      const output = JSON.parse(result.output);
+      expect(output.injectSteps[0].ephemeralMessage).toContain('Concord cannot tell which session you are');
+    });
+  });
+
+  describe('handleAntigravityPreInvocation', () => {
+    it('returns empty injectSteps when no messages are pending', () => {
+      const payload = JSON.stringify({ conversationId: 'conv-test-123' });
+      const result = handleAntigravityPreInvocation(repos, payload);
+      expect(JSON.parse(result.output)).toEqual({ injectSteps: [] });
+    });
+
+    it('drains pending inbox messages and injects them as userMessage', () => {
+      const payload = JSON.stringify({ conversationId: 'conv-test-123' });
+      const start = handleAntigravitySessionStart(repos, payload);
+      const recipientId = start.agentId!;
+
+      handleRegisterAgent(repos, { agent_id: 'claude:sender', kind: 'claude-code' });
+      handleSendAgentMessage(repos, {
+        operation: 'prompt',
+        agentId: 'claude:sender',
+        toAgentId: recipientId,
+        content: 'Review the latest diff please.',
+        idempotencyKey: 'k-1',
+      });
+
+      const result = handleAntigravityPreInvocation(repos, payload);
+      const parsed = JSON.parse(result.output);
+      expect(parsed.injectSteps).toHaveLength(1);
+      expect(parsed.injectSteps[0].userMessage).toContain('Review the latest diff please.');
+      expect(parsed.injectSteps[0].userMessage).toContain('claude:sender');
+
+      // Subsequent call should have no more pending messages
+      const secondResult = handleAntigravityPreInvocation(repos, payload);
+      expect(JSON.parse(secondResult.output)).toEqual({ injectSteps: [] });
+    });
+  });
+
+  describe('handleAntigravityStop', () => {
+    it('returns empty object when no messages are pending at stop', () => {
+      const payload = JSON.stringify({ conversationId: 'conv-test-123' });
+      const result = handleAntigravityStop(repos, payload);
+      expect(JSON.parse(result.output)).toEqual({});
+    });
+
+    it('continues turn with reason when new messages arrived before stop', () => {
+      const payload = JSON.stringify({ conversationId: 'conv-test-123' });
+      const start = handleAntigravitySessionStart(repos, payload);
+      const recipientId = start.agentId!;
+
+      handleRegisterAgent(repos, { agent_id: 'claude:sender', kind: 'claude-code' });
+      handleSendAgentMessage(repos, {
+        operation: 'prompt',
+        agentId: 'claude:sender',
+        toAgentId: recipientId,
+        content: 'Wait, one more thing!',
+        idempotencyKey: 'k-2',
+      });
+
+      const result = handleAntigravityStop(repos, payload);
+      const parsed = JSON.parse(result.output);
+      expect(parsed.decision).toBe('continue');
+      expect(parsed.reason).toContain('Wait, one more thing!');
+    });
+  });
+});
+

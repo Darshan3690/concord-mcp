@@ -16,6 +16,10 @@ import {
   uninstallGooseConfig,
 } from '../goose-config.js';
 import {
+  installGlobalAntigravityHooks,
+  uninstallGlobalAntigravityHooks,
+} from '../antigravity-hooks.js';
+import {
   hasMcpServer,
   isConcordServerOwned,
   removeMcpServer,
@@ -643,16 +647,21 @@ export function installAdapter(
     const path = join(userHome(env), '.gemini', 'config', 'mcp_config.json');
     if (existsSync(path)) {
       const existing = readFileSync(path, 'utf8');
-      if (hasMcpServer(existing)) {
-        // A concord server entry is already registered (custom or standard) — preserve it!
-        return;
+      if (!hasMcpServer(existing)) {
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(
+          path,
+          upsertMcpServer(existing, undefined, { CONCORD_AGENT_KIND: 'antigravity' }),
+        );
       }
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, upsertMcpServer(existing));
     } else {
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, upsertMcpServer(undefined));
+      writeFileSync(
+        path,
+        upsertMcpServer(undefined, undefined, { CONCORD_AGENT_KIND: 'antigravity' }),
+      );
     }
+    installGlobalAntigravityHooks(env);
     return;
   }
 
@@ -762,6 +771,7 @@ export function uninstallGlobalAdapters(env: NodeJS.ProcessEnv = process.env): A
       // Unreadable or malformed config is left untouched.
     }
   }
+  uninstallGlobalAntigravityHooks(env);
   const statePath = join(userHome(env), '.concord', 'adapters.json');
   if (existsSync(statePath)) rmSync(statePath);
   return statusGlobalAdapters(env);

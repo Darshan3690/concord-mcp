@@ -39,6 +39,9 @@ export const SESSION_SOURCES: readonly SessionSource[] = [
   { kind: 'claude-code', envVar: 'CLAUDE_CODE_SESSION_ID' },
   { kind: 'grok', envVar: 'GROK_SESSION_ID' },
   { kind: 'goose', envVar: 'AGENT_SESSION_ID' },
+  // Set in Google Antigravity IDE environments (Windows, Linux, macOS).
+  // Headless agy CLI does not pass these variables to child processes; sessions
+  // there resolve through hookPayload (SessionStart / PreInvocation hooks).
   { kind: 'antigravity', envVar: 'ANTIGRAVITY_CONVERSATION_ID' },
   { kind: 'antigravity', envVar: 'ANTIGRAVITY_SESSION_ID' },
 ];

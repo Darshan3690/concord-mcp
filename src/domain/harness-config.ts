@@ -213,7 +213,7 @@ export const HARNESS_CONFIGS: Record<HarnessName, HarnessConfig> = {
     },
     installedCapabilities: ['pull', 'busy'],
     installedDetail:
-      'Concord MCP server is registered with Antigravity; rules and durable inbox delivery are available.',
+      'Lifecycle hooks register session identity and drain inbox messages into turns; rules are available.',
     unsupportedDetail: 'Antigravity executable not found or environment not detected.',
   },
 };

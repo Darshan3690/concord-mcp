@@ -4,7 +4,13 @@ import type { Command } from '@commander-js/extra-typings';
 import { z } from 'zod';
 
 import type { Repositories } from '../../db/index.js';
-import { resolveIdentity, UNRESOLVED_IDENTITY_MESSAGE } from '../../domain/identity.js';
+import {
+  agentIdForSession,
+  hookSessionId,
+  resolveIdentity,
+  UNRESOLVED_IDENTITY_MESSAGE,
+} from '../../domain/identity.js';
+import { renderInboxBody } from '../../domain/pull-inbox.js';
 import { buildRoster } from '../../domain/presence.js';
 import { ensureAgentRegistered } from '../../tools/register-agent.js';
 import type { TelemetryRecorder } from '../../telemetry/events.js';
@@ -13,7 +19,7 @@ import { openContext } from '../context.js';
 import { checkFileOverlaps } from './check.js';
 import { decideCloudPreToolUse, handleCloudSessionStart } from './cloud-hooks.js';
 import { cloudAccess, HOOK_TIMEOUT_MS } from './cloud-inbox.js';
-import { registerPullEndpoint } from './inbox.js';
+import { drainInbox, registerPullEndpoint } from './inbox.js';
 import { sessionStartMessage } from './session-start-message.js';
 import type { CloudRuntime } from '../../cloud/runtime.js';
 
@@ -136,6 +142,106 @@ export function handleSessionStart(
   return { agentId, message: sessionStartMessage(agentId, others) };
 }
 
+/**
+ * Handle Antigravity SessionStart hook: extracts conversationId, registers
+ * presence, and returns an ephemeral intro message with the derived agent id.
+ */
+export function handleAntigravitySessionStart(
+  repos: Repositories,
+  rawJson: string,
+): { agentId: string | undefined; output: string } {
+  const sessionId = hookSessionId(rawJson);
+  if (sessionId === undefined) {
+    return {
+      agentId: undefined,
+      output: JSON.stringify({
+        injectSteps: [
+          { ephemeralMessage: `Concord: ${UNRESOLVED_IDENTITY_MESSAGE}` },
+        ],
+      }),
+    };
+  }
+  const identity = {
+    agentId: agentIdForSession('antigravity', sessionId),
+    kind: 'antigravity',
+    origin: 'hook' as const,
+  };
+  const agentId = identity.agentId;
+  ensureAgentRegistered(repos, identity, process.cwd());
+  registerPullEndpoint(repos, agentId, 'antigravity');
+
+  const others = buildRoster(repos.agents.list(), Date.now()).filter(
+    (entry) => entry.agentId !== agentId,
+  );
+  const msg = sessionStartMessage(agentId, others);
+  return {
+    agentId,
+    output: JSON.stringify({
+      injectSteps: [{ ephemeralMessage: msg }],
+    }),
+  };
+}
+
+/**
+ * Handle Antigravity PreInvocation hook: extracts conversationId, registers
+ * presence, drains pending inbox messages, and injects them as userMessages.
+ */
+export function handleAntigravityPreInvocation(
+  repos: Repositories,
+  rawJson: string,
+): { output: string } {
+  const sessionId = hookSessionId(rawJson);
+  if (sessionId === undefined) {
+    return { output: JSON.stringify({ injectSteps: [] }) };
+  }
+  const identity = {
+    agentId: agentIdForSession('antigravity', sessionId),
+    kind: 'antigravity',
+    origin: 'hook' as const,
+  };
+  const agentId = identity.agentId;
+  ensureAgentRegistered(repos, identity, process.cwd());
+
+  const messages = drainInbox(repos, agentId, 'antigravity');
+  if (messages.length === 0) {
+    return { output: JSON.stringify({ injectSteps: [] }) };
+  }
+  return {
+    output: JSON.stringify({
+      injectSteps: [
+        {
+          userMessage: `[concord] Incoming message(s):\n\n${renderInboxBody(messages)}`,
+        },
+      ],
+    }),
+  };
+}
+
+/**
+ * Handle Antigravity Stop hook: checks if pending inbox messages exist;
+ * if so, drains them and tells Antigravity to continue the turn.
+ */
+export function handleAntigravityStop(
+  repos: Repositories,
+  rawJson: string,
+): { output: string } {
+  const sessionId = hookSessionId(rawJson);
+  if (sessionId === undefined) {
+    return { output: JSON.stringify({}) };
+  }
+  const agentId = agentIdForSession('antigravity', sessionId);
+  const messages = drainInbox(repos, agentId, 'antigravity');
+  if (messages.length === 0) {
+    return { output: JSON.stringify({}) };
+  }
+  return {
+    output: JSON.stringify({
+      decision: 'continue',
+      reason: `New Concord message(s) arrived before this turn ended.\n\n${renderInboxBody(messages)}`,
+    }),
+  };
+}
+
 /** Read piped stdin to a string. Returns '' when attached to a TTY (no input). */
 function readStdin(): string {
   if (process.stdin.isTTY) {
@@ -152,11 +258,11 @@ export function registerHookCommand(program: Command, telemetry?: TelemetryRecor
   program
     .command('hook <event>')
     .description(
-      'Run a Concord hook. events: pre-tool-use (PreToolUse overlap gate) and ' +
-        'session-start (SessionStart presence auto-register); both read a Claude Code JSON ' +
-        'payload on stdin.',
+      'Run a Concord hook. events: pre-tool-use (PreToolUse overlap gate), ' +
+        'session-start (SessionStart presence auto-register), pre-invocation, and stop.',
     )
-    .action(async (event) => {
+    .option('--client <client>', 'Client calling the hook (e.g. antigravity, claude)')
+    .action(async (event, options) => {
       const access = cloudAccess(process.cwd(), { timeoutMs: HOOK_TIMEOUT_MS });
       if (access.kind === 'unusable') {
         // Never a local workspace in its place, and never a blocked edit or session.
@@ -167,6 +273,30 @@ export function registerHookCommand(program: Command, telemetry?: TelemetryRecor
         await runCloudHook(access.runtime, event);
         return;
       }
+
+      if (options.client === 'antigravity') {
+        const repos = openContext(process.cwd()).repos;
+        const input = readStdin();
+        if (event === 'session-start') {
+          const result = handleAntigravitySessionStart(repos, input);
+          process.stdout.write(`${result.output}\n`);
+          return;
+        }
+        if (event === 'pre-invocation') {
+          const result = handleAntigravityPreInvocation(repos, input);
+          process.stdout.write(`${result.output}\n`);
+          return;
+        }
+        if (event === 'stop') {
+          const result = handleAntigravityStop(repos, input);
+          process.stdout.write(`${result.output}\n`);
+          return;
+        }
+        process.stderr.write(`Unknown hook event for antigravity: ${event}\n`);
+        process.exitCode = 1;
+        return;
+      }
+
       if (event === 'session-start') {
         const result = handleSessionStart(openContext(process.cwd()).repos, readStdin());
         process.stdout.write(`${result.message}\n`);

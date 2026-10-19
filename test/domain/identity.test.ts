@@ -88,9 +88,12 @@ describe('resolveIdentity', () => {
   });
 
   it('never lets one client borrow another client session id', () => {
-    // A Codex hook whose payload is missing must not fall through to the Claude
-    // Code environment and register codex:<hash of a Claude session>.
+    // A Codex or Antigravity session must not fall through to the Claude
+    // Code environment and register codex/antigravity:<hash of a Claude session>.
     expect(resolveIdentity({ CLAUDE_CODE_SESSION_ID: SESSION }, { kind: 'codex' })).toBeUndefined();
+    expect(
+      resolveIdentity({ CLAUDE_CODE_SESSION_ID: SESSION }, { kind: 'antigravity' }),
+    ).toBeUndefined();
   });
 
   it('returns undefined rather than inventing an id when nothing identifies the session', () => {

@@ -22,10 +22,7 @@ async function main(): Promise<void> {
   // this agent's identity is known before the transport connects — and it is the
   // same id the relay CLI derives for the same session.
   const kind = process.env['CONCORD_AGENT_KIND']?.trim();
-  const identity = resolveIdentity(
-    process.env,
-    kind !== undefined && kind !== '' ? { kind } : {},
-  );
+  const identity = resolveIdentity(process.env, kind !== undefined && kind !== '' ? { kind } : {});
 
   // A repository linked to Concord Cloud works through it: no local database,
   // and no telemetry from this package for operations that are not local.

@@ -177,9 +177,7 @@ export function handleAntigravitySessionStart(
     return {
       agentId: undefined,
       output: JSON.stringify({
-        injectSteps: [
-          { ephemeralMessage: `Concord: ${UNRESOLVED_IDENTITY_MESSAGE}` },
-        ],
+        injectSteps: [{ ephemeralMessage: `Concord: ${UNRESOLVED_IDENTITY_MESSAGE}` }],
       }),
     };
   }
@@ -244,10 +242,7 @@ export function handleAntigravityPreInvocation(
  * Handle Antigravity Stop hook: checks if pending inbox messages exist;
  * if so, drains them and tells Antigravity to continue the turn.
  */
-export function handleAntigravityStop(
-  repos: Repositories,
-  rawJson: string,
-): { output: string } {
+export function handleAntigravityStop(repos: Repositories, rawJson: string): { output: string } {
   const sessionId = hookSessionId(rawJson);
   if (sessionId === undefined) {
     return { output: JSON.stringify({}) };
@@ -291,9 +286,7 @@ export function registerHookCommand(program: Command, telemetry?: TelemetryRecor
       // ~/.gemini/config, so the payload is the only reliable source.
       const isAntigravity = options.client === 'antigravity';
       const antigravityInput = isAntigravity ? readStdin() : '';
-      const workspace = isAntigravity
-        ? antigravityWorkspace(antigravityInput)
-        : process.cwd();
+      const workspace = isAntigravity ? antigravityWorkspace(antigravityInput) : process.cwd();
 
       const access = cloudAccess(workspace, { timeoutMs: HOOK_TIMEOUT_MS });
       if (access.kind === 'unusable') {

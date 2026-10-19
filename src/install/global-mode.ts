@@ -132,7 +132,8 @@ const USER_FILES: readonly UserFile[] = [
     isDetected: isAntigravityDetected,
     registration: { id: 'antigravity', present: hasMcpServer },
     path: (env) => join(antigravityConfigDir(env), 'mcp_config.json'),
-    install: (existing) => upsertMcpServer(existing, undefined, { CONCORD_AGENT_KIND: 'antigravity' }),
+    install: (existing) =>
+      upsertMcpServer(existing, undefined, { CONCORD_AGENT_KIND: 'antigravity' }),
     uninstall: removeMcpServer,
   },
 ];

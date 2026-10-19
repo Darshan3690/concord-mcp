@@ -162,9 +162,7 @@ export async function handleCloudAntigravitySessionStart(
     return {
       agentId: undefined,
       output: JSON.stringify({
-        injectSteps: [
-          { ephemeralMessage: `Concord: ${UNRESOLVED_IDENTITY_MESSAGE}` },
-        ],
+        injectSteps: [{ ephemeralMessage: `Concord: ${UNRESOLVED_IDENTITY_MESSAGE}` }],
       }),
     };
   }

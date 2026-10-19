@@ -73,7 +73,8 @@ export function hasMcpServer(existing: string): boolean {
   return CONCORD_SERVER_KEY in (mcpConfigSchema.parse(JSON.parse(existing)).mcpServers ?? {});
 }
 
-const GROK_CONCORD_KEY = /^mcp_servers\.concord(?:\.|$)/u;
+/** Matches Concord's `mcp_servers.concord` TOML key path and every key or subtable under it. */
+export const CONCORD_TOML_KEY = /^mcp_servers\.concord(?:\.|$)/u;
 
 /** Each key path Grok TOML assigns or opens as a table, spacing and quotes removed. */
 function* grokKeyPaths(existing: string): Generator<{ path: string; header: boolean }> {
@@ -100,7 +101,7 @@ function* grokKeyPaths(existing: string): Generator<{ path: string; header: bool
 
 /** Whether Grok TOML registers Concord in any spelling: a table (quoted or not), dotted keys, or inline. */
 export function hasGrokMcpServer(existing: string): boolean {
-  return [...grokKeyPaths(existing)].some(({ path }) => GROK_CONCORD_KEY.test(path));
+  return [...grokKeyPaths(existing)].some(({ path }) => CONCORD_TOML_KEY.test(path));
 }
 
 /** Remove Concord's entry from an `mcpServers` config string, keeping the rest. */
@@ -193,7 +194,7 @@ export function removeGrokMcpServer(existing: string): string {
 
     const table = inString ? undefined : /^\s*\[([^\]]+)\]\s*(?:#.*)?$/u.exec(line)?.[1];
     if (table !== undefined) {
-      inConcordTable = GROK_CONCORD_KEY.test(tomlKeyPath(table));
+      inConcordTable = CONCORD_TOML_KEY.test(tomlKeyPath(table));
       if (inConcordTable) continue;
     }
     if (!inConcordTable) preserved.push(line);

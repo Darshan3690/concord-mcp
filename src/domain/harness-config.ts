@@ -14,6 +14,7 @@ export const harnessNames = [
   'grok',
   'goose',
   'antigravity',
+  'copilot-cli',
 ] as const;
 export type HarnessName = (typeof harnessNames)[number];
 
@@ -215,6 +216,24 @@ export const HARNESS_CONFIGS: Record<HarnessName, HarnessConfig> = {
     installedDetail:
       'Lifecycle hooks register session identity and drain inbox messages into turns; rules are available.',
     unsupportedDetail: 'Antigravity executable not found or environment not detected.',
+  },
+  'copilot-cli': {
+    name: 'copilot-cli',
+    executable: 'copilot',
+    minimumVersion: [1, 0, 0],
+    defaultCapability: busyPull,
+    monitorCapability: busyPull,
+    monitor: {
+      kind: 'harness-monitor',
+      lifecycle: 'native',
+      completion: 'native',
+      background: false,
+      verified: false,
+    },
+    installedCapabilities: ['pull', 'steer', 'busy'],
+    installedDetail:
+      'Lifecycle hooks register session identity and deliver inbox messages after tool calls and at turn end; an idle session receives them on its next turn.',
+    unsupportedDetail: 'Copilot CLI does not meet the verified hooks baseline (1.0.0).',
   },
 };
 

@@ -205,7 +205,8 @@ negations in `.concord/.gitignore` can take effect.
 ├── concord.db          local source of truth
 ├── HANDOFF.md          human-readable handoff
 ├── REVIEW_PACKET.md    review-ready evidence
-└── WORK_STATE.json     generated export (optional)
+├── events.jsonl        chronological tool events, one JSON object per line
+└── WORK_STATE.json     generated work-state export
 ```
 
 ## CLI

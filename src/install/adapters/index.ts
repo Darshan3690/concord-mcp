@@ -1,31 +1,47 @@
 import { spawnSync } from 'node:child_process';
-import {
-  existsSync,
-  chmodSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readlinkSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import {
   HARNESS_CONFIGS,
+  harnessNames,
   type HarnessName,
   type MonitorKind,
 } from '../../domain/harness-config.js';
 import { userHome } from '../../config/paths.js';
-import { claudeSkillsPluginPath } from '../claude-plugin.js';
 import { installCodexHooks, installCodexMcpConfig, uninstallCodexConfig } from '../codex-config.js';
 import {
   gooseConfigInstalled,
   installGooseMcpConfig,
   uninstallGooseConfig,
 } from '../goose-config.js';
+import {
+  globalAntigravityHooksPath,
+  hasAntigravityHooks,
+  installGlobalAntigravityHooks,
+  uninstallGlobalAntigravityHooks,
+} from '../antigravity-hooks.js';
+import {
+  hasMcpServer,
+  isConcordServerOwned,
+  removeMcpServer,
+  upsertMcpServer,
+} from '../mcp-config.js';
+import {
+  cursorTarget,
+  hasConcordManifest,
+  inspectLink,
+  installLink,
+  isEphemeralPath,
+  isSymlink,
+  linkNeedsRepair,
+  linkTarget,
+  packagedAdapter,
+  packagedPath,
+  type EphemeralTest,
+  type LinkCheck,
+  type LinkedHarness,
+} from './links.js';
 
 export type { HarnessName, MonitorKind } from '../../domain/harness-config.js';
 export type AdapterStatus =
@@ -39,6 +55,8 @@ export interface AdapterReport {
   capabilities: string[];
   detail: string;
   installedPath?: string | undefined;
+  /** Present when the adapter link points somewhere other than this package. */
+  link?: LinkCheck | undefined;
 }
 
 export function executablePath(name: string, env: NodeJS.ProcessEnv): string | undefined {
@@ -52,52 +70,6 @@ export function executablePath(name: string, env: NodeJS.ProcessEnv): string | u
     }
   }
   return undefined;
-}
-
-function packagedPath(moduleUrl: string, parts: readonly string[]): string | undefined {
-  let directory = dirname(fileURLToPath(moduleUrl));
-  for (let depth = 0; depth < 7; depth += 1) {
-    const candidate = join(directory, ...parts);
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-  return undefined;
-}
-
-function isSymlink(path: string): boolean {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-function installLink(source: string, target: string): 'installed' | 'occupied' {
-  mkdirSync(dirname(target), { recursive: true });
-  if (existsSync(target) || isSymlink(target)) {
-    if (!isSymlink(target)) return 'occupied';
-    if (readlinkSync(target) === source) return 'installed';
-    rmSync(target);
-  }
-  symlinkSync(source, target, process.platform === 'win32' ? 'junction' : 'dir');
-  return 'installed';
-}
-
-function hasConcordManifest(path: string): boolean {
-  const manifests = [
-    join(path, '.claude-plugin', 'plugin.json'),
-    join(path, 'gemini-extension.json'),
-    join(path, 'package.json'),
-  ];
-  return manifests.some((manifest) => {
-    try {
-      return readFileSync(manifest, 'utf8').includes('concord-relay');
-    } catch {
-      return false;
-    }
-  });
 }
 
 export function run(
@@ -135,30 +107,85 @@ function atLeast(actual: readonly number[], required: readonly number[]): boolea
   return true;
 }
 
-function installedLinkReport(
-  harness: HarnessName,
+/** The running package, and which paths count as throwaway checkouts. */
+interface LinkContext {
+  moduleUrl: string;
+  isEphemeral: EphemeralTest;
+}
+
+function linkCheck(harness: LinkedHarness, env: NodeJS.ProcessEnv, links: LinkContext): LinkCheck {
+  return inspectLink(linkTarget(harness, env), packagedAdapter(links.moduleUrl, harness));
+}
+
+/** A link that is broken, reported with where it points and how to fix it. */
+function brokenLinkReport(
+  harness: LinkedHarness,
   detected: boolean,
   monitor: MonitorKind,
-  target: string,
+  link: LinkCheck,
+  isEphemeral: EphemeralTest,
+): AdapterReport | undefined {
+  if (!linkNeedsRepair(link, isEphemeral)) return undefined;
+  const problem =
+    link.health === 'dangling'
+      ? 'which no longer exists'
+      : 'a temporary checkout that will be cleaned up';
+  const fix =
+    link.expected === undefined
+      ? 'Run `concord setup` from the installed package'
+      : `Run \`concord doctor --fix\` to link it to ${link.expected}`;
+  return {
+    harness,
+    detected,
+    status: 'action_required',
+    monitor,
+    capabilities: [],
+    detail: `${link.target} links to ${link.pointsTo ?? 'nothing'}, ${problem}. ${fix}.`,
+    link,
+  };
+}
+
+function installedLinkReport(
+  harness: LinkedHarness,
+  detected: boolean,
+  monitor: MonitorKind,
+  link: LinkCheck,
   capabilities: string[],
   detail: string,
 ): AdapterReport {
-  const installed = existsSync(target) && hasConcordManifest(target);
+  const installed = link.health === 'linked' || link.health === 'foreign';
   return {
     harness,
     detected,
     status: installed ? 'installed' : detected ? 'action_required' : 'not_detected',
     monitor,
     capabilities,
-    detail,
-    ...(installed ? { installedPath: target } : {}),
+    ...foreignLinkNote(link, detail),
+    ...(installed ? { installedPath: link.target } : {}),
   };
 }
 
-function statusClaude(env: NodeJS.ProcessEnv): AdapterReport {
+/** A working link to another Concord copy keeps its paths visible in the report. */
+function foreignLinkNote(link: LinkCheck, detail: string): Pick<AdapterReport, 'detail' | 'link'> {
+  if (link.health !== 'foreign') return { detail };
+  return {
+    detail: `${detail} Linked to the Concord copy at ${link.pointsTo ?? link.target}, not this one.`,
+    link,
+  };
+}
+
+function statusClaude(env: NodeJS.ProcessEnv, links: LinkContext): AdapterReport {
   const config = HARNESS_CONFIGS['claude-code'];
   const executable = executablePath(config.executable, env);
-  const target = claudeSkillsPluginPath(env);
+  const link = linkCheck('claude-code', env, links);
+  const broken = brokenLinkReport(
+    'claude-code',
+    executable !== undefined,
+    config.monitor.kind,
+    link,
+    links.isEphemeral,
+  );
+  if (broken !== undefined) return broken;
   if (executable !== undefined) {
     const version = versionTuple(run(executable, ['--version'], env).output);
     if (version === undefined || !atLeast(version, config.minimumVersion)) {
@@ -173,10 +200,10 @@ function statusClaude(env: NodeJS.ProcessEnv): AdapterReport {
     }
   }
   return installedLinkReport(
-    config.name,
+    'claude-code',
     executable !== undefined,
     config.monitor.kind,
-    target,
+    link,
     [...config.installedCapabilities],
     config.installedDetail,
   );
@@ -218,14 +245,6 @@ function statusCodex(env: NodeJS.ProcessEnv): AdapterReport {
       ? config.installedDetail
       : 'Global hooks are installed, but the managed app-server daemon is not ready.',
   };
-}
-
-function geminiTarget(env: NodeJS.ProcessEnv): string {
-  return join(userHome(env), '.gemini', 'extensions', 'concord-relay');
-}
-
-function cursorTarget(env: NodeJS.ProcessEnv): string {
-  return join(userHome(env), '.cursor', 'extensions', 'get-concord-ai.concord-relay');
 }
 
 const CURSOR_HOOKS = {
@@ -337,9 +356,17 @@ function geminiCompletionInjectionReady(repoRoot: string): boolean {
   }
 }
 
-function statusGemini(env: NodeJS.ProcessEnv, repoRoot?: string): AdapterReport {
+function statusGemini(
+  env: NodeJS.ProcessEnv,
+  links: LinkContext,
+  repoRoot?: string,
+): AdapterReport {
   const config = HARNESS_CONFIGS.gemini;
   const executable = executablePath(config.executable, env);
+  const link = linkCheck('gemini', env, links);
+  const detected = executable !== undefined;
+  const broken = brokenLinkReport('gemini', detected, config.monitor.kind, link, links.isEphemeral);
+  if (broken !== undefined) return broken;
   if (executable !== undefined) {
     const version = versionTuple(run(executable, ['--version'], env).output);
     if (version === undefined || !atLeast(version, config.minimumVersion)) {
@@ -354,10 +381,10 @@ function statusGemini(env: NodeJS.ProcessEnv, repoRoot?: string): AdapterReport 
     }
   }
   const installed = installedLinkReport(
-    config.name,
+    'gemini',
     executable !== undefined,
     config.monitor.kind,
-    geminiTarget(env),
+    link,
     [...config.installedCapabilities],
     config.installedDetail,
   );
@@ -379,12 +406,15 @@ function statusGemini(env: NodeJS.ProcessEnv, repoRoot?: string): AdapterReport 
   };
 }
 
-function statusCursor(env: NodeJS.ProcessEnv): AdapterReport {
+function statusCursor(env: NodeJS.ProcessEnv, links: LinkContext): AdapterReport {
   const config = HARNESS_CONFIGS.cursor;
   const target = cursorTarget(env);
   const executable = executablePath(config.executable, env);
   const detected = executable !== undefined;
-  const extensionInstalled = hasConcordManifest(target);
+  const link = linkCheck('cursor', env, links);
+  const broken = brokenLinkReport('cursor', detected, config.monitor.kind, link, links.isEphemeral);
+  if (broken !== undefined) return broken;
+  const extensionInstalled = link.health === 'linked' || link.health === 'foreign';
   const hooksInstalled = cursorHookInstalled(env);
   if (executable !== undefined) {
     const version = versionTuple(run(executable, ['--version'], env).output);
@@ -411,9 +441,12 @@ function statusCursor(env: NodeJS.ProcessEnv): AdapterReport {
         : 'not_detected',
     monitor: config.monitor.kind,
     capabilities: installed ? [...config.installedCapabilities] : [],
-    detail: installed
-      ? config.installedDetail
-      : 'The Cursor extension and global lifecycle hooks are not both installed.',
+    ...foreignLinkNote(
+      link,
+      installed
+        ? config.installedDetail
+        : 'The Cursor extension and global lifecycle hooks are not both installed.',
+    ),
     ...(extensionInstalled ? { installedPath: target } : {}),
   };
 }
@@ -491,104 +524,222 @@ function statusGoose(env: NodeJS.ProcessEnv): AdapterReport {
   };
 }
 
+function statusAntigravity(env: NodeJS.ProcessEnv, repoRoot?: string): AdapterReport {
+  const config = HARNESS_CONFIGS.antigravity;
+  const executable = executablePath(config.executable, env);
+  const detected =
+    executable !== undefined ||
+    env['ANTIGRAVITY_AGENT'] === '1' ||
+    existsSync(join(userHome(env), '.gemini', 'config'));
+
+  if (!detected) {
+    return {
+      harness: config.name,
+      detected: false,
+      status: 'not_detected',
+      monitor: config.monitor.kind,
+      capabilities: [],
+      detail: 'Antigravity is not installed or not detected in environment.',
+    };
+  }
+
+  const workspaceMcpPath =
+    repoRoot === undefined ? undefined : join(repoRoot, '.agents', 'mcp_config.json');
+  const globalMcpPath = join(userHome(env), '.gemini', 'config', 'mcp_config.json');
+  const workspaceHooksPath =
+    repoRoot === undefined ? undefined : join(repoRoot, '.agents', 'hooks.json');
+  const globalHooksPath = globalAntigravityHooksPath(env);
+  let hasWorkspace = false;
+  let hasGlobal = false;
+  let hasWorkspaceHooks = false;
+  let hasGlobalHooks = false;
+  try {
+    if (workspaceMcpPath !== undefined && existsSync(workspaceMcpPath)) {
+      hasWorkspace = hasMcpServer(readFileSync(workspaceMcpPath, 'utf8'));
+    }
+    if (existsSync(globalMcpPath)) {
+      hasGlobal = hasMcpServer(readFileSync(globalMcpPath, 'utf8'));
+    }
+    if (workspaceHooksPath !== undefined && existsSync(workspaceHooksPath)) {
+      hasWorkspaceHooks = hasAntigravityHooks(readFileSync(workspaceHooksPath, 'utf8'));
+    }
+    if (existsSync(globalHooksPath)) {
+      hasGlobalHooks = hasAntigravityHooks(readFileSync(globalHooksPath, 'utf8'));
+    }
+  } catch (error) {
+    return {
+      harness: config.name,
+      detected: true,
+      status: 'error',
+      monitor: config.monitor.kind,
+      capabilities: [],
+      detail: `Failed to read Antigravity configuration: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const installed = hasWorkspace || hasGlobal;
+  const hooksRemaining = !installed && (hasWorkspaceHooks || hasGlobalHooks);
+
+  return {
+    harness: config.name,
+    detected: true,
+    status: installed ? 'installed' : 'action_required',
+    monitor: config.monitor.kind,
+    capabilities: installed ? [...config.installedCapabilities] : ['pull', 'busy'],
+    detail: installed
+      ? config.installedDetail
+      : hooksRemaining
+        ? 'Concord lifecycle hooks remain installed, but MCP server is not registered.'
+        : 'Concord MCP server is not yet registered in .agents/mcp_config.json or ~/.gemini/config/mcp_config.json.',
+  };
+}
+
 export function statusGlobalAdapters(
   env: NodeJS.ProcessEnv = process.env,
   repoRoot?: string,
+  moduleUrl: string = import.meta.url,
+  isEphemeral: EphemeralTest = isEphemeralPath,
 ): AdapterReport[] {
-  return [
-    statusClaude(env),
-    statusCodex(env),
-    statusCursor(env),
-    statusGemini(env, repoRoot),
-    statusGrok(env),
-    statusGoose(env),
-  ];
+  return harnessNames.map((harness) =>
+    statusAdapter(harness, env, repoRoot, moduleUrl, isEphemeral),
+  );
 }
 
-function installPackagedLink(
+/** One harness's adapter health, without probing the others. */
+export function statusAdapter(
+  harness: HarnessName,
+  env: NodeJS.ProcessEnv = process.env,
+  repoRoot?: string,
+  moduleUrl: string = import.meta.url,
+  isEphemeral: EphemeralTest = isEphemeralPath,
+): AdapterReport {
+  const links = { moduleUrl, isEphemeral };
+  switch (harness) {
+    case 'claude-code':
+      return statusClaude(env, links);
+    case 'codex':
+      return statusCodex(env);
+    case 'cursor':
+      return statusCursor(env, links);
+    case 'gemini':
+      return statusGemini(env, links, repoRoot);
+    case 'grok':
+      return statusGrok(env);
+    case 'goose':
+      return statusGoose(env);
+    case 'antigravity':
+      return statusAntigravity(env, repoRoot);
+  }
+}
+
+function requirePackagedLink(
   moduleUrl: string,
-  parts: readonly string[],
-  target: string,
-): 'installed' | 'occupied' | 'missing' {
-  const source = packagedPath(moduleUrl, parts);
-  return source === undefined ? 'missing' : installLink(source, target);
+  harness: LinkedHarness,
+  env: NodeJS.ProcessEnv,
+  isEphemeral: EphemeralTest,
+): void {
+  const source = packagedAdapter(moduleUrl, harness);
+  const target = linkTarget(harness, env);
+  if (source === undefined) throw new Error(`Packaged ${harness} adapter is missing.`);
+  if (installLink(source, target, isEphemeral) === 'occupied') {
+    throw new Error(`Refusing to replace non-Concord path: ${target}`);
+  }
 }
 
-function requirePackagedLink(moduleUrl: string, parts: readonly string[], target: string): void {
-  const result = installPackagedLink(moduleUrl, parts, target);
-  if (result === 'missing') throw new Error(`Packaged adapter is missing: ${parts.join('/')}`);
-  if (result === 'occupied') throw new Error(`Refusing to replace non-Concord path: ${target}`);
+/** Install one harness's adapter when the harness is on PATH; throws on failure. */
+export function installAdapter(
+  harness: HarnessName,
+  moduleUrl: string,
+  env: NodeJS.ProcessEnv = process.env,
+  isEphemeral: EphemeralTest = isEphemeralPath,
+): void {
+  if (harness === 'antigravity') {
+    const config = HARNESS_CONFIGS.antigravity;
+    const executable = executablePath(config.executable, env);
+    const detected =
+      executable !== undefined ||
+      env['ANTIGRAVITY_AGENT'] === '1' ||
+      existsSync(join(userHome(env), '.gemini', 'config'));
+    if (!detected) return;
+    const path = join(userHome(env), '.gemini', 'config', 'mcp_config.json');
+    if (existsSync(path)) {
+      const existing = readFileSync(path, 'utf8');
+      if (!hasMcpServer(existing)) {
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(
+          path,
+          upsertMcpServer(existing, undefined, { CONCORD_AGENT_KIND: 'antigravity' }),
+        );
+      }
+    } else {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(
+        path,
+        upsertMcpServer(undefined, undefined, { CONCORD_AGENT_KIND: 'antigravity' }),
+      );
+    }
+    installGlobalAntigravityHooks(env);
+    return;
+  }
+
+  const executable = executablePath(HARNESS_CONFIGS[harness].executable, env);
+  if (executable === undefined) return;
+  switch (harness) {
+    case 'claude-code':
+    case 'gemini':
+      requirePackagedLink(moduleUrl, harness, env, isEphemeral);
+      return;
+    case 'cursor':
+      requirePackagedLink(moduleUrl, 'cursor', env, isEphemeral);
+      installCursorHooks(env);
+      return;
+    case 'codex': {
+      installCodexMcpConfig(env);
+      installCodexHooks(env);
+      const version = versionTuple(run(executable, ['--version'], env).output);
+      if (version !== undefined && atLeast(version, HARNESS_CONFIGS.codex.minimumVersion)) {
+        run(executable, ['app-server', 'daemon', 'bootstrap'], env);
+        run(executable, ['app-server', 'daemon', 'start'], env);
+        run(executable, ['app-server', 'daemon', 'enable-remote-control'], env);
+      }
+      return;
+    }
+    case 'grok': {
+      const source = packagedPath(moduleUrl, ['plugin', 'grok', 'concord-relay']);
+      if (source === undefined) throw new Error('Packaged Grok adapter is missing.');
+      const current = run(executable, ['plugin', 'list', '--json'], env);
+      if (!current.output.includes('concord-relay')) {
+        const installed = run(executable, ['plugin', 'install', source, '--trust'], env);
+        if (!installed.ok) throw new Error(installed.output || 'Grok plugin installation failed.');
+      }
+      return;
+    }
+    case 'goose': {
+      const version = versionTuple(run(executable, ['--version'], env).output);
+      if (version === undefined || !atLeast(version, HARNESS_CONFIGS.goose.minimumVersion)) {
+        return;
+      }
+      installGooseMcpConfig(env);
+      return;
+    }
+  }
 }
 
 export function installGlobalAdapters(
   moduleUrl: string,
   env: NodeJS.ProcessEnv = process.env,
   repoRoot?: string,
+  isEphemeral: EphemeralTest = isEphemeralPath,
 ): AdapterReport[] {
   const failures = new Map<HarnessName, string>();
-  const attempt = (harness: HarnessName, action: () => void): void => {
+  for (const harness of harnessNames) {
     try {
-      action();
+      installAdapter(harness, moduleUrl, env, isEphemeral);
     } catch (error) {
       failures.set(harness, error instanceof Error ? error.message : String(error));
     }
-  };
+  }
 
-  attempt('claude-code', () => {
-    if (executablePath('claude', env) !== undefined) {
-      requirePackagedLink(moduleUrl, ['plugin', 'concord-relay'], claudeSkillsPluginPath(env));
-    }
-  });
-
-  const codex = executablePath('codex', env);
-  attempt('codex', () => {
-    if (codex !== undefined) {
-      installCodexMcpConfig(env);
-      installCodexHooks(env);
-      const version = versionTuple(run(codex, ['--version'], env).output);
-      if (version !== undefined && atLeast(version, HARNESS_CONFIGS.codex.minimumVersion)) {
-        run(codex, ['app-server', 'daemon', 'bootstrap'], env);
-        run(codex, ['app-server', 'daemon', 'start'], env);
-        run(codex, ['app-server', 'daemon', 'enable-remote-control'], env);
-      }
-    }
-  });
-
-  attempt('gemini', () => {
-    if (executablePath('gemini', env) !== undefined) {
-      requirePackagedLink(moduleUrl, ['plugin', 'gemini', 'concord-relay'], geminiTarget(env));
-    }
-  });
-  attempt('cursor', () => {
-    if (executablePath('cursor', env) !== undefined) {
-      requirePackagedLink(moduleUrl, ['plugin', 'cursor', 'concord-relay'], cursorTarget(env));
-      installCursorHooks(env);
-    }
-  });
-  const grok = executablePath('grok', env);
-  attempt('grok', () => {
-    if (grok !== undefined) {
-      const source = packagedPath(moduleUrl, ['plugin', 'grok', 'concord-relay']);
-      if (source === undefined) throw new Error('Packaged Grok adapter is missing.');
-      const current = run(grok, ['plugin', 'list', '--json'], env);
-      if (!current.output.includes('concord-relay')) {
-        const installed = run(grok, ['plugin', 'install', source, '--trust'], env);
-        if (!installed.ok) throw new Error(installed.output || 'Grok plugin installation failed.');
-      }
-    }
-  });
-
-  attempt('goose', () => {
-    const goose = executablePath('goose', env);
-    if (goose === undefined) return;
-    const version = versionTuple(run(goose, ['--version'], env).output);
-    if (version === undefined || !atLeast(version, HARNESS_CONFIGS.goose.minimumVersion)) {
-      return;
-    }
-    installGooseMcpConfig(env);
-  });
-
-  const report = statusGlobalAdapters(env, repoRoot).map((entry) => {
+  const report = statusGlobalAdapters(env, repoRoot, moduleUrl, isEphemeral).map((entry) => {
     const failure = failures.get(entry.harness);
     return failure === undefined
       ? entry
@@ -610,23 +761,46 @@ export function installGlobalAdapters(
 
 function removeOwnedLink(path: string): boolean {
   if (!isSymlink(path)) return false;
-  if (!hasConcordManifest(path)) return false;
+  // A dangling link has no manifest left to check, and is never anyone's work.
+  if (existsSync(path) && !hasConcordManifest(path)) return false;
   rmSync(path);
   return true;
 }
 
 export function uninstallGlobalAdapters(env: NodeJS.ProcessEnv = process.env): AdapterReport[] {
-  removeOwnedLink(claudeSkillsPluginPath(env));
-  removeOwnedLink(geminiTarget(env));
-  removeOwnedLink(cursorTarget(env));
+  removeOwnedLink(linkTarget('claude-code', env));
+  removeOwnedLink(linkTarget('gemini', env));
+  removeOwnedLink(linkTarget('cursor', env));
   uninstallCursorHooks(env);
   const grok = executablePath('grok', env);
   if (grok !== undefined) run(grok, ['plugin', 'uninstall', 'concord-relay', '--confirm'], env);
   uninstallCodexConfig(env);
   uninstallGooseConfig(env);
+  const antigravityMcp = join(userHome(env), '.gemini', 'config', 'mcp_config.json');
+  if (existsSync(antigravityMcp)) {
+    try {
+      const existing = readFileSync(antigravityMcp, 'utf8');
+      if (hasMcpServer(existing) && isConcordServerOwned(existing)) {
+        writeFileSync(antigravityMcp, removeMcpServer(existing));
+      }
+    } catch {
+      // Unreadable or malformed config is left untouched.
+    }
+  }
+  try {
+    uninstallGlobalAntigravityHooks(env);
+  } catch {
+    // Malformed or unreadable hooks config is left untouched.
+  }
   const statePath = join(userHome(env), '.concord', 'adapters.json');
   if (existsSync(statePath)) rmSync(statePath);
   return statusGlobalAdapters(env);
+}
+
+/** A harness that is set up but not working, or whose adapter link is broken. */
+export function adapterNeedsAttention(entry: AdapterReport): boolean {
+  if (entry.status === 'error') return true;
+  return entry.status === 'action_required' && (entry.detected || entry.link !== undefined);
 }
 
 export function renderAdapterReport(report: readonly AdapterReport[]): string {
@@ -638,6 +812,12 @@ export function renderAdapterReport(report: readonly AdapterReport[]): string {
       `    capabilities: ${capability}`,
       `    ${entry.detail}`,
     );
+    if (entry.link !== undefined) {
+      lines.push(
+        `    link:     ${entry.link.target} -> ${entry.link.pointsTo ?? '(none)'}`,
+        `    expected: ${entry.link.expected ?? '(no packaged adapter in this copy)'}`,
+      );
+    }
   }
   return lines.join('\n');
 }

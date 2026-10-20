@@ -9,11 +9,18 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { installGlobalAdapters, statusGlobalAdapters } from '../../src/install/adapters/index.js';
+import {
+  installGlobalAdapters,
+  statusGlobalAdapters,
+  uninstallGlobalAdapters,
+} from '../../src/install/adapters/index.js';
+
+// Links into this checkout count as lasting even when it lives under /tmp.
+const LASTING = (): boolean => false;
 
 describe('global harness adapters', () => {
   it('installs every detected file-based adapter independently', () => {
@@ -31,7 +38,7 @@ describe('global harness adapters', () => {
     }
     const env = { HOME: home, PATH: bin };
 
-    const report = installGlobalAdapters(import.meta.url, env);
+    const report = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
 
     expect(report.find((entry) => entry.harness === 'claude-code')?.status).toBe('installed');
     expect(report.find((entry) => entry.harness === 'gemini')?.status).toBe('installed');
@@ -60,8 +67,8 @@ describe('global harness adapters', () => {
       })}\n`,
     );
 
-    installGlobalAdapters(import.meta.url, { HOME: home, PATH: bin });
-    installGlobalAdapters(import.meta.url, { HOME: home, PATH: bin });
+    installGlobalAdapters(import.meta.url, { HOME: home, PATH: bin }, undefined, LASTING);
+    installGlobalAdapters(import.meta.url, { HOME: home, PATH: bin }, undefined, LASTING);
 
     const installedConfig = readFileSync(configPath, 'utf8');
     expect(installedConfig).toContain('node /tmp/user-stop.mjs');
@@ -107,6 +114,7 @@ describe('global harness adapters', () => {
       'harness-monitor',
       'harness-monitor',
       'harness-monitor',
+      'harness-monitor',
     ]);
   });
 
@@ -119,10 +127,12 @@ describe('global harness adapters', () => {
     writeFileSync(gemini, '#!/bin/sh\necho 0.55.1\n');
     chmodSync(gemini, 0o755);
     const env = { HOME: home, PATH: bin };
-    installGlobalAdapters(import.meta.url, env);
+    installGlobalAdapters(import.meta.url, env, undefined, LASTING);
 
     expect(
-      statusGlobalAdapters(env, project).find((entry) => entry.harness === 'gemini'),
+      statusGlobalAdapters(env, project, undefined, LASTING).find(
+        (entry) => entry.harness === 'gemini',
+      ),
     ).toMatchObject({
       status: 'action_required',
       capabilities: ['pull', 'steer', 'busy'],
@@ -138,7 +148,9 @@ describe('global harness adapters', () => {
     );
 
     expect(
-      statusGlobalAdapters(env, project).find((entry) => entry.harness === 'gemini'),
+      statusGlobalAdapters(env, project, undefined, LASTING).find(
+        (entry) => entry.harness === 'gemini',
+      ),
     ).toMatchObject({
       status: 'action_required',
       capabilities: ['pull', 'steer', 'busy'],
@@ -153,7 +165,9 @@ describe('global harness adapters', () => {
     );
 
     expect(
-      statusGlobalAdapters(env, project).find((entry) => entry.harness === 'gemini'),
+      statusGlobalAdapters(env, project, undefined, LASTING).find(
+        (entry) => entry.harness === 'gemini',
+      ),
     ).toMatchObject({
       status: 'installed',
       capabilities: ['pull', 'steer', 'idle', 'busy', 'monitor-command'],
@@ -191,7 +205,12 @@ describe('global harness adapters', () => {
     mkdirSync(occupied, { recursive: true });
     writeFileSync(join(occupied, 'package.json'), '{"name":"someone-else"}');
 
-    const report = installGlobalAdapters(import.meta.url, { HOME: home, PATH: bin });
+    const report = installGlobalAdapters(
+      import.meta.url,
+      { HOME: home, PATH: bin },
+      undefined,
+      LASTING,
+    );
 
     expect(report.find((entry) => entry.harness === 'cursor')?.status).toBe('error');
     expect(report.find((entry) => entry.harness === 'gemini')?.status).toBe('installed');
@@ -242,7 +261,7 @@ describe('global harness adapters', () => {
 
     const env = { HOME: home, PATH: bin };
 
-    const report = installGlobalAdapters(import.meta.url, env);
+    const report = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
 
     expect(report.find((entry) => entry.harness === 'goose')).toMatchObject({
       status: 'unsupported_version',
@@ -273,5 +292,169 @@ describe('global harness adapters', () => {
 
     const config = readFileSync(configPath, 'utf8');
     expect(config).toContain('- existing-extension');
+  });
+
+  it('detects and installs Antigravity global MCP config when agy is present', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-'));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    const agy = join(bin, 'agy');
+    writeFileSync(agy, '#!/bin/sh\necho 1.0.0\n');
+    chmodSync(agy, 0o755);
+
+    const env = { HOME: home, PATH: bin };
+    const report = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
+
+    expect(report.find((entry) => entry.harness === 'antigravity')).toMatchObject({
+      status: 'installed',
+      capabilities: ['pull', 'busy'],
+    });
+
+    const mcpConfig = readFileSync(join(home, '.gemini', 'config', 'mcp_config.json'), 'utf8');
+    expect(mcpConfig).toContain('concord-mcp');
+  });
+
+  it('reports action_required when Antigravity is detected via ANTIGRAVITY_AGENT but unconfigured', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-env-'));
+    const env = { HOME: home, PATH: '', ANTIGRAVITY_AGENT: '1' };
+
+    const report = statusGlobalAdapters(env);
+    expect(report.find((entry) => entry.harness === 'antigravity')).toMatchObject({
+      detected: true,
+      status: 'action_required',
+    });
+  });
+
+  it('reports not_detected when Antigravity is absent', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-absent-'));
+    const env = { HOME: home, PATH: '' };
+
+    const report = statusGlobalAdapters(env);
+    expect(report.find((entry) => entry.harness === 'antigravity')).toMatchObject({
+      detected: false,
+      status: 'not_detected',
+    });
+  });
+
+  it('preserves custom concord server in Antigravity mcp_config.json on install and uninstall', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-custom-'));
+    const configDir = join(home, '.gemini', 'config');
+    mkdirSync(configDir, { recursive: true });
+    const configPath = join(configDir, 'mcp_config.json');
+    const customConfig = JSON.stringify({
+      mcpServers: {
+        concord: {
+          command: 'my-custom-concord',
+          args: ['--custom'],
+        },
+      },
+    });
+    writeFileSync(configPath, customConfig);
+
+    const env = { HOME: home, ANTIGRAVITY_AGENT: '1' };
+    const installReport = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
+    expect(installReport.find((entry) => entry.harness === 'antigravity')?.status).toBe(
+      'installed',
+    );
+
+    const afterInstall = readFileSync(configPath, 'utf8');
+    expect(afterInstall).toContain('my-custom-concord');
+
+    const uninstallReport = uninstallGlobalAdapters(env);
+    expect(uninstallReport.find((entry) => entry.harness === 'antigravity')?.status).toBe(
+      'installed',
+    );
+
+    const afterUninstall = readFileSync(configPath, 'utf8');
+    expect(afterUninstall).toContain('my-custom-concord');
+  });
+
+  it('reports error when Antigravity config file cannot be read', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-err-'));
+    const configDir = join(home, '.gemini', 'config');
+    mkdirSync(configDir, { recursive: true });
+    // Making mcp_config.json a directory causes readFileSync to throw EISDIR
+    mkdirSync(join(configDir, 'mcp_config.json'));
+
+    const env = { HOME: home, ANTIGRAVITY_AGENT: '1' };
+    const report = statusGlobalAdapters(env);
+    expect(report.find((entry) => entry.harness === 'antigravity')?.status).toBe('error');
+  });
+
+  it('preserves concord server with custom args and env in Antigravity mcp_config.json', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-antigravity-args-env-'));
+    const configDir = join(home, '.gemini', 'config');
+    mkdirSync(configDir, { recursive: true });
+    const configPath = join(configDir, 'mcp_config.json');
+    const customConfig = JSON.stringify({
+      mcpServers: {
+        concord: {
+          command: 'concord-mcp',
+          args: ['--custom-port', '8080'],
+          env: {
+            CUSTOM_ENV: 'active',
+          },
+        },
+      },
+    });
+    writeFileSync(configPath, customConfig);
+
+    const env = { HOME: home, ANTIGRAVITY_AGENT: '1' };
+    const installReport = installGlobalAdapters(import.meta.url, env, undefined, LASTING);
+    expect(installReport.find((entry) => entry.harness === 'antigravity')?.status).toBe(
+      'installed',
+    );
+
+    const afterInstall = readFileSync(configPath, 'utf8');
+    expect(afterInstall).toContain('--custom-port');
+    expect(afterInstall).toContain('CUSTOM_ENV');
+
+    const uninstallReport = uninstallGlobalAdapters(env);
+    expect(uninstallReport.find((entry) => entry.harness === 'antigravity')?.status).toBe(
+      'installed',
+    );
+
+    const afterUninstall = readFileSync(configPath, 'utf8');
+    expect(afterUninstall).toContain('--custom-port');
+    expect(afterUninstall).toContain('CUSTOM_ENV');
+  });
+
+  it('finishes global uninstall and removes state even when Antigravity hooks are malformed', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-ag-malformed-uninstall-'));
+    const env = { HOME: home, USERPROFILE: home };
+    const hooksPath = join(home, '.gemini', 'config', 'hooks.json');
+    mkdirSync(dirname(hooksPath), { recursive: true });
+    const broken = '{ malformed hooks json';
+    writeFileSync(hooksPath, broken);
+
+    const statePath = join(home, '.concord', 'adapters.json');
+    mkdirSync(dirname(statePath), { recursive: true });
+    writeFileSync(statePath, '{}');
+
+    const report = uninstallGlobalAdapters(env);
+    expect(report).toBeDefined();
+    expect(existsSync(statePath)).toBe(false);
+    expect(readFileSync(hooksPath, 'utf8')).toBe(broken);
+  });
+
+  it('reports action_required with remaining hooks detail when hooks remain but MCP is not registered', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-ag-hooks-remaining-'));
+    const env = { HOME: home, USERPROFILE: home, ANTIGRAVITY_AGENT: '1' };
+    const hooksPath = join(home, '.gemini', 'config', 'hooks.json');
+    mkdirSync(dirname(hooksPath), { recursive: true });
+    writeFileSync(
+      hooksPath,
+      JSON.stringify({
+        concord: {
+          SessionStart: [{ command: 'concord hook session-start --client antigravity' }],
+          PreInvocation: [{ command: 'concord hook pre-invocation --client antigravity' }],
+        },
+      }),
+    );
+
+    const report = statusGlobalAdapters(env);
+    const agEntry = report.find((entry) => entry.harness === 'antigravity');
+    expect(agEntry?.status).toBe('action_required');
+    expect(agEntry?.detail).toContain('Concord lifecycle hooks remain installed');
   });
 });

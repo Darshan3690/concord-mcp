@@ -107,6 +107,7 @@ removes exactly what it added.
 | Gemini CLI                         | [Setup and delivery](./docs/gemini-cli.md)   |
 | Grok Build                         | [Setup and delivery](./docs/grok-build.md)   |
 | Goose                              | [Setup and delivery](./docs/goose.md)        |
+| Google Antigravity                 | [Setup and delivery](./docs/antigravity.md)  |
 | Any other MCP-capable coding agent | Shared work-state through the five MCP tools |
 
 > There is no universal `/concord` slash command — commands are client-specific.
@@ -204,7 +205,8 @@ negations in `.concord/.gitignore` can take effect.
 ├── concord.db          local source of truth
 ├── HANDOFF.md          human-readable handoff
 ├── REVIEW_PACKET.md    review-ready evidence
-└── WORK_STATE.json     generated export (optional)
+├── events.jsonl        chronological tool events, one JSON object per line
+└── WORK_STATE.json     generated work-state export
 ```
 
 ## CLI
@@ -222,12 +224,20 @@ concord tasks                # list all tracked tasks
 concord handoff <task-id>    # print the latest handoff
 concord review-packet <id>   # print the latest review packet
 concord export markdown      # regenerate .concord/ artifacts
+concord check <files...>     # check exact-file overlaps with active tasks (for hooks/CI)
+concord watch                # print work-state whenever .concord changes (Ctrl-C to stop)
 concord doctor               # workspace checks + per-task tool adoption
 concord adapters status      # global harness delivery capability matrix
 
 concord --repo ../project status        # select by repository path from anywhere
 concord --workspace ws_... status       # select an id returned by a Concord operation
 ```
+
+To block conflicting edits in a pre-commit hook or CI, run `concord check src/file.ts`
+(or `concord check --task <id> src/file.ts` to exclude your own task).
+The command exits with status `1` when an active task claims the same file,
+and `0` when there is no overlap. Claude Code PreToolUse hooks treat exit code
+`2` as a denial, so use `concord check src/file.ts || exit 2` in that hook.
 
 `--repo` and `--workspace` are global, mutually exclusive options. The CLI uses
 the same `CONCORD_REPO_ROOT` → `CLAUDE_PROJECT_DIR` → working-directory priority

@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync, chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 
@@ -9,6 +8,7 @@ import {
   type MonitorKind,
 } from '../../domain/harness-config.js';
 import { userHome } from '../../config/paths.js';
+import { spawnCommandSync } from '../spawn-command.js';
 import { installCodexHooks, installCodexMcpConfig, uninstallCodexConfig } from '../codex-config.js';
 import {
   gooseConfigInstalled,
@@ -80,12 +80,7 @@ export function run(
   ok: boolean;
   output: string;
 } {
-  const result = spawnSync(command, [...args], {
-    env,
-    encoding: 'utf8',
-    timeout: 15_000,
-    windowsHide: true,
-  });
+  const result = spawnCommandSync(command, args, { env, timeout: 15_000 });
   return {
     ok: result.status === 0,
     output: `${result.stdout}${result.stderr}`.trim(),

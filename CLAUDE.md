@@ -85,7 +85,7 @@ CLI commands are thin: validate input → call domain/db → render.
 ## Working in this repo
 
 ```bash
-pnpm install          # better-sqlite3 ships prebuilds; the build allowlist is a fallback
+pnpm install          # better-sqlite3 loads its bundled prebuilds; its node-gyp build is skipped
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # eslint (strict, type-aware)
 pnpm test             # vitest run

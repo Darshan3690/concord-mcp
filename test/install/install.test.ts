@@ -41,6 +41,7 @@ describe('installConcord', () => {
       join('.codex', 'concord.md'),
       join('.cursor', 'rules', 'concord.mdc'),
       join('.github', 'copilot-instructions.md'),
+      join('.agents', 'rules', 'concord.md'),
     ]);
     for (const relPath of written) {
       expect(existsSync(join(root, relPath))).toBe(true);
@@ -52,6 +53,9 @@ describe('installConcord', () => {
     );
     expect(readFileSync(join(root, '.cursor', 'rules', 'concord.mdc'), 'utf8')).toContain(
       'alwaysApply: true',
+    );
+    expect(readFileSync(join(root, '.agents', 'rules', 'concord.md'), 'utf8')).toContain(
+      'trigger: always_on',
     );
   });
 

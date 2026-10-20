@@ -6,6 +6,116 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-10-19
+
+### Added
+
+- **Sessions install or repair their own harness adapter.** When a Claude Code,
+  Grok or Goose session starts the Concord MCP server, it checks that harness's
+  adapter in the background. If the adapter is missing or broken and you opted
+  in during `concord setup` (or with `--auto-adapters`), Concord installs or
+  repairs it for the next session. The current session gets a one-time notice
+  with its agent id and monitor command. Without opt-in, nothing is changed
+  (#207).
+
+### Fixed
+
+- **Uninstalling no longer breaks Codex.** `concord adapters uninstall` left
+  behind the `[mcp_servers.concord.tools.*]` tables Codex writes when a tool is
+  always-approved, and Codex then refused to start with an "invalid transport"
+  error. Every `mcp_servers.concord` table is now removed (#227, #228).
+- **Grok sessions start the Concord monitor.** Grok's Stop hook now asks the
+  agent to start the persistent inbox monitor when none is running (#215).
+- **Monitor commands pass `--agent`.** Grok's `monitor` tool does not pass the
+  session id to the command it watches, so `concord inbox watch` could not tell
+  which session it was. The Grok and Cursor monitor commands now include
+  `--agent <agent-id>`, and `concord inbox register` prints the filled-in
+  command (#204, #206).
+
+## [0.14.1] - 2026-10-17
+
+### Fixed
+
+- **`concord doctor` repairs dangling adapter links.** A harness adapter link
+  that points nowhere, or into a temporary or `npx` checkout, is reported with
+  its target and the expected packaged path. `doctor --fix` (or the prompt on a
+  terminal) re-points it, `setup` no longer moves a working link into a
+  throwaway checkout, and `uninstall` removes a dangling Concord link (#202,
+  #203).
+- **Overlap warnings cover every claimed task.** `start_work` now warns about
+  overlap with assigned, blocked and handed-off tasks, not only active ones,
+  matching `concord check` (#185).
+- **Grok config editing is safe.** A Grok config with inline
+  `mcp_servers = { ... }` is left untouched (with a warning naming the file)
+  instead of having a table appended that Grok could not load. Reading and
+  removing Concord's tables now skip single- and multi-line TOML strings and
+  comments, and a quoted key such as `[mcp_servers."concord.env"]` is no longer
+  mistaken for Concord's (#191).
+- **The Cursor migration keeps your own server.** `concord setup` no longer
+  removes a `concord` entry from `~/.cursor/mcp.json` that the user wrote
+  themselves (#194).
+- **Workspace selection.** An early tool call that names no workspace no longer
+  discards the client's MCP roots answer, and `update_work` records delivery in
+  the workspace it started in, even if another workspace becomes active or
+  Concord Cloud refuses a request while the message is delivered.
+- **`concord watch` in global mode** works on a fresh project before any
+  artifacts exist.
+
+### Changed
+
+- Dependency updates, including `ink` 8 and `js-yaml` 5 (#217, #218).
+
+## [0.14.0] - 2026-10-12
+
+### Added
+
+- **Global mode.** Agents can now use Concord in repositories where
+  `concord setup` was never run, with nothing written into the repository. Their
+  work goes into one machine-wide store, `~/.concord/global.db`, as a project
+  named after the repository's normalized `origin` remote, so every clone shares
+  it. A repository with no remote is named by its path, and anything outside a
+  repository goes to `general`, matching Concord Cloud. A repository that was set
+  up keeps its own `.concord/` store (#181, #182).
+- **`concord setup` offers global mode.** The first interactive run asks once
+  (yes by default), and `--global` / `--no-global` decide without asking. The
+  answer is saved in `~/.concord/config.json`. Turning it on adds a user-level
+  MCP registration for Claude Code, Cursor, Gemini CLI and Grok Build, and a short
+  instruction block in each installed harness's user instructions file. Turning
+  it off removes only what global mode added; registrations you made yourself are
+  never changed (#183).
+- **Cursor in global mode.** A user-level Concord server asks the client which
+  folder is open (MCP roots) and joins it, unless `CONCORD_REPO_ROOT` or
+  `CLAUDE_PROJECT_DIR` already names the repository. Cursor's `sessionStart` hook
+  reads `concord inbox status --json` to give the session its workspace id, and
+  the instructions for a folder in the global store. A folder linked to Concord
+  Cloud is refused with a clear error instead of being served from a local store
+  (#184).
+
+### Changed
+
+- **Signed in, Concord Cloud is the default.** After `concord cloud login`, a
+  repository works through Concord Cloud as its git remote's project without
+  `concord cloud link`. A session outside any repository that names its folder
+  (Claude Code) joins the cloud's `general` workspace, where agents that belong
+  to no repository can talk. `concord cloud unlink` now keeps a repository local
+  even while signed in, and `concord cloud status` says which applies and why.
+  These stay local as before: a repository that already holds local Concord
+  state (`concord cloud link` moves it on purpose), one with no remote, and a
+  user-level server that learns its folder from MCP roots (#198).
+- **Database migration 012.** A task is now unique per project and task id,
+  so one store can hold several repositories. Existing tasks, handoffs, reviews
+  and updates move to the repository's own project unchanged. Migrations now run
+  atomically: one that fails or leaves broken references doesn't commit, and the
+  previous schema stays (#181).
+- `concord doctor` reports which store, local or global, the workspace uses
+  (#182).
+
+### Fixed
+
+- Pressing Ctrl+D at a `concord setup` prompt no longer crashes setup. It counts
+  as no answer: the upgrade prompt declines, and the global-mode question is left
+  undecided until the next run (#189).
+
 ## [0.13.0] - 2026-10-11
 
 ### Added
@@ -419,7 +529,10 @@ unimplemented. The recipient now pulls instead.
 - `concord install` writes usage instructions for Claude Code, Codex, and Cursor.
 - Two-agent overlap demo (`pnpm demo`).
 
-[Unreleased]: https://github.com/Get-Concord-AI/concord-mcp/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/Get-Concord-AI/concord-mcp/compare/v0.14.2...HEAD
+[0.14.2]: https://github.com/Get-Concord-AI/concord-mcp/compare/v0.14.1...v0.14.2
+[0.14.1]: https://github.com/Get-Concord-AI/concord-mcp/compare/v0.14.0...v0.14.1
+[0.14.0]: https://github.com/Get-Concord-AI/concord-mcp/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/Get-Concord-AI/concord-mcp/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Get-Concord-AI/concord-mcp/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Get-Concord-AI/concord-mcp/compare/v0.10.5...v0.11.0

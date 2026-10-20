@@ -4,6 +4,7 @@ import type { Repositories } from './db/index.js';
 import type { AgentIdentity } from './domain/identity.js';
 import type { TelemetryRecorder } from './telemetry/events.js';
 import { CONCORD_SERVER_INSTRUCTIONS } from './install/instructions.js';
+import type { AdapterNotice } from './adapter-check.js';
 import type { AvailableUpdate } from './update-notifier.js';
 import { registerWorkStateResource } from './tools/get-work-state.js';
 import { registerWorkflowTools } from './tools/workflow.js';
@@ -32,6 +33,8 @@ export interface ServerOptions {
   getAvailableUpdate?: () => AvailableUpdate | undefined;
   /** Receives whitelisted, content-free results from workflow handlers. */
   telemetry?: TelemetryRecorder;
+  /** Reads the background check of this session's harness adapter. */
+  getAdapterNotice?: () => AdapterNotice | undefined;
 }
 
 /**
@@ -50,8 +53,8 @@ export function createServer(repos: Repositories, options: ServerOptions = {}): 
   // Register the read surface first so we get the change-notifier, then run it
   // (plus the caller's hook) after every write.
   const notifyWorkStateChanged = registerWorkStateResource(server, selectedRepos, selectWorkspace);
-  const onWrite = (): void => {
-    options.onToolWrite?.(manager?.current());
+  const onWrite = (workspace?: WorkspaceContext): void => {
+    options.onToolWrite?.(workspace ?? manager?.current());
     notifyWorkStateChanged();
   };
   registerWorkflowTools(
@@ -63,6 +66,7 @@ export function createServer(repos: Repositories, options: ServerOptions = {}): 
     options.getAvailableUpdate,
     undefined,
     options.telemetry,
+    options.getAdapterNotice,
   );
   return server;
 }

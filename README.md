@@ -6,7 +6,7 @@
 
 <h1 align="center">Concord MCP</h1>
 
-<p align="center"><strong>Let Claude Code, Codex, Cursor, Gemini CLI, Grok Build, and Goose talk to each other.</strong></p>
+<p align="center"><strong>Let Claude Code, Codex, Cursor, Gemini CLI, Grok Build, Goose, and GitHub Copilot CLI talk to each other.</strong></p>
 
 <p align="center">
   The open-source, local-first communication and coordination layer for AI coding agents.
@@ -63,12 +63,11 @@ direct prompts and replies.
 <summary>What <code>concord setup</code> changes</summary>
 
 `concord setup` creates the local `.concord/` workspace, registers the MCP server
-for Claude, Cursor, Gemini, Grok, Codex, and GitHub Copilot CLI (`.mcp.json`,
-`.cursor/mcp.json`, `.gemini/settings.json`, `.grok/config.toml`,
-`~/.copilot/mcp-config.json`, and `~/.codex/config.toml`) and writes
+for Claude, Cursor, Gemini, Grok, and Codex (`.mcp.json`, `.cursor/mcp.json`,
+`.gemini/settings.json`, `.grok/config.toml`, and `~/.codex/config.toml`) and writes
 Concord's tool instructions into your client configs (`CLAUDE.md`, `AGENTS.md`,
-`.codex/`, `.cursor/rules/`, `.github/copilot-instructions.md`). It merges into
-existing config rather than replacing it and is safe to re-run.
+`.codex/`, `.cursor/rules/`). It merges into existing config rather than replacing
+it and is safe to re-run.
 
 Setup also detects supported clients and attempts to install their global Concord
 adapters independently. Use `--no-adapters` to skip that step or
@@ -89,7 +88,7 @@ answer is saved in `~/.concord/config.json`; `concord setup --global` or
 With global mode on, Concord registers itself at user level for each installed
 agent and adds a short Concord section to their user instruction files
 (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`, Goose's
-`.goosehints`; Cursor receives it from its global session hook). Nothing is
+`.goosehints`, `~/.copilot/copilot-instructions.md`; Cursor receives it from its global session hook). Nothing is
 written into those repositories: their work is kept in `~/.concord/global.db`,
 one project per repository, named by its git remote as Concord Cloud names it.
 Sessions outside any repository share the `general` project. A repository you
@@ -108,6 +107,7 @@ removes exactly what it added.
 | Gemini CLI                         | [Setup and delivery](./docs/gemini-cli.md)         |
 | Grok Build                         | [Setup and delivery](./docs/grok-build.md)         |
 | Goose                              | [Setup and delivery](./docs/goose.md)              |
+| Google Antigravity                 | [Setup and delivery](./docs/antigravity.md)        |
 | GitHub Copilot CLI                 | [Setup and delivery](./docs/github-copilot-cli.md) |
 | Any other MCP-capable coding agent | Shared work-state through the five MCP tools       |
 
@@ -206,7 +206,8 @@ negations in `.concord/.gitignore` can take effect.
 ├── concord.db          local source of truth
 ├── HANDOFF.md          human-readable handoff
 ├── REVIEW_PACKET.md    review-ready evidence
-└── WORK_STATE.json     generated export (optional)
+├── events.jsonl        chronological tool events, one JSON object per line
+└── WORK_STATE.json     generated work-state export
 ```
 
 ## CLI
@@ -224,12 +225,20 @@ concord tasks                # list all tracked tasks
 concord handoff <task-id>    # print the latest handoff
 concord review-packet <id>   # print the latest review packet
 concord export markdown      # regenerate .concord/ artifacts
+concord check <files...>     # check exact-file overlaps with active tasks (for hooks/CI)
+concord watch                # print work-state whenever .concord changes (Ctrl-C to stop)
 concord doctor               # workspace checks + per-task tool adoption
 concord adapters status      # global harness delivery capability matrix
 
 concord --repo ../project status        # select by repository path from anywhere
 concord --workspace ws_... status       # select an id returned by a Concord operation
 ```
+
+To block conflicting edits in a pre-commit hook or CI, run `concord check src/file.ts`
+(or `concord check --task <id> src/file.ts` to exclude your own task).
+The command exits with status `1` when an active task claims the same file,
+and `0` when there is no overlap. Claude Code PreToolUse hooks treat exit code
+`2` as a denial, so use `concord check src/file.ts || exit 2` in that hook.
 
 `--repo` and `--workspace` are global, mutually exclusive options. The CLI uses
 the same `CONCORD_REPO_ROOT` → `CLAUDE_PROJECT_DIR` → working-directory priority

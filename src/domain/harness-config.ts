@@ -13,6 +13,7 @@ export const harnessNames = [
   'gemini',
   'grok',
   'goose',
+  'antigravity',
   'copilot-cli',
 ] as const;
 export type HarnessName = (typeof harnessNames)[number];
@@ -129,7 +130,7 @@ export const HARNESS_CONFIGS: Record<HarnessName, HarnessConfig> = {
       kind: 'harness-monitor',
       lifecycle: 'one-shot',
       completion: 'native',
-      command: 'concord inbox watch --provider cursor --once',
+      command: 'concord inbox watch --agent <agent-id> --provider cursor --once',
       background: true,
       verified: true,
       backgroundShell: { supported: true, completionStartsTurn: true },
@@ -171,7 +172,7 @@ export const HARNESS_CONFIGS: Record<HarnessName, HarnessConfig> = {
       kind: 'harness-monitor',
       lifecycle: 'persistent',
       completion: 'native',
-      command: 'concord inbox watch --provider grok',
+      command: 'concord inbox watch --agent <agent-id> --provider grok',
       background: true,
       verified: true,
       backgroundShell: { supported: true, completionStartsTurn: true },
@@ -198,6 +199,24 @@ export const HARNESS_CONFIGS: Record<HarnessName, HarnessConfig> = {
       'Concord MCP server is registered with Goose; durable inbox delivery is available.',
     unsupportedDetail: 'Goose does not meet the verified MCP baseline (1.52.0).',
   },
+  antigravity: {
+    name: 'antigravity',
+    executable: 'agy',
+    minimumVersion: [1, 0, 0],
+    defaultCapability: busyPull,
+    monitorCapability: busyPull,
+    monitor: {
+      kind: 'harness-monitor',
+      lifecycle: 'native',
+      completion: 'native',
+      background: false,
+      verified: false,
+    },
+    installedCapabilities: ['pull', 'busy'],
+    installedDetail:
+      'Lifecycle hooks register session identity and drain inbox messages into turns; rules are available.',
+    unsupportedDetail: 'Antigravity executable not found or environment not detected.',
+  },
   'copilot-cli': {
     name: 'copilot-cli',
     executable: 'copilot',
@@ -206,15 +225,15 @@ export const HARNESS_CONFIGS: Record<HarnessName, HarnessConfig> = {
     monitorCapability: busyPull,
     monitor: {
       kind: 'harness-monitor',
-      lifecycle: 'one-shot',
+      lifecycle: 'native',
       completion: 'native',
       background: false,
       verified: false,
     },
-    installedCapabilities: ['pull', 'busy'],
+    installedCapabilities: ['pull', 'steer', 'busy'],
     installedDetail:
-      'Concord MCP server is registered with Copilot CLI; durable inbox delivery is available.',
-    unsupportedDetail: 'Copilot CLI does not meet the verified MCP baseline (1.0.0).',
+      'Lifecycle hooks register session identity and deliver inbox messages after tool calls and at turn end; an idle session receives them on its next turn.',
+    unsupportedDetail: 'Copilot CLI does not meet the verified hooks baseline (1.0.0).',
   },
 };
 
@@ -245,7 +264,10 @@ export function renderHarnessMonitorInstructions(): string {
   const cursor = HARNESS_CONFIGS.cursor.monitor.command ?? '';
   const gemini = HARNESS_CONFIGS.gemini.monitor.command ?? '';
   const grok = HARNESS_CONFIGS.grok.monitor.command ?? '';
-  return `In Grok Build, keep this session reachable while idle by starting one persistent
+  return `Replace <agent-id> with the id the SessionStart hook printed for this session.
+A monitor may not inherit the session's environment, so it cannot work the id out itself.
+
+In Grok Build, keep this session reachable while idle by starting one persistent
 monitor for \`${grok}\`. Do not start a duplicate when that monitor is active.
 
 In Cursor, start exactly one Cursor background Shell task for \`${cursor}\`.

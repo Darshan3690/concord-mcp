@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
+import { startBackgroundAdapterCheck } from './adapter-check.js';
 import { writeArtifacts } from './artifacts/index.js';
 import { cloudSessionFor, connectCloud, createCloudProxyServer } from './cloud/proxy.js';
-import { readLink } from './cloud/settings.js';
+import { cloudTargetFor } from './cloud/target.js';
 import { startBackgroundUpdateCheck } from './update-notifier.js';
 import { resolveCheckoutRoot, resolveRepoRoot } from './config/paths.js';
 import { resolveIdentity } from './domain/identity.js';
@@ -20,7 +21,8 @@ async function main(): Promise<void> {
   // One server process per session, with the session id in its environment, so
   // this agent's identity is known before the transport connects — and it is the
   // same id the relay CLI derives for the same session.
-  const identity = resolveIdentity(process.env);
+  const kind = process.env['CONCORD_AGENT_KIND']?.trim();
+  const identity = resolveIdentity(process.env, kind !== undefined && kind !== '' ? { kind } : {});
 
   // A repository linked to Concord Cloud works through it: no local database,
   // and no telemetry from this package for operations that are not local.
@@ -30,6 +32,8 @@ async function main(): Promise<void> {
     identity,
     resolveCheckoutRoot(process.cwd(), process.env),
   );
+  // Before the cloud branch: adapters are installed on this machine either way.
+  const adapterCheck = startBackgroundAdapterCheck(identity, process.env);
   if (cloud !== undefined) {
     const proxy = createCloudProxyServer(cloud, () => connectCloud(cloud));
     await proxy.connect(new StdioServerTransport());
@@ -50,6 +54,7 @@ async function main(): Promise<void> {
     workspaceManager,
     ...(identity === undefined ? {} : { identity }),
     getAvailableUpdate: updateCheck.getAvailableUpdate,
+    getAdapterNotice: adapterCheck.getNotice,
     ...(telemetry === undefined ? {} : { telemetry }),
     onToolWrite: (workspace) => {
       if (workspace !== undefined) {
@@ -62,7 +67,7 @@ async function main(): Promise<void> {
     // from it; ask the client which folder it has open.
     server.server.oninitialized = () => {
       joinClientRoot(server.server, workspaceManager, {
-        isCloudLinked: (root) => readLink(root) !== undefined,
+        isCloudLinked: (root) => cloudTargetFor(root, process.env) !== undefined,
       })
         .then((joined) => {
           if (joined !== undefined && identity !== undefined) {

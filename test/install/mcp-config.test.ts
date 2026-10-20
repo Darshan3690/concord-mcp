@@ -14,11 +14,12 @@ import {
   upsertGrokMcpServer,
   upsertMcpServer,
   hasGrokMcpServer,
+  removeGrokMcpServer,
 } from '../../src/install/mcp-config.js';
 
 describe('upsertMcpServer', () => {
   it('registers the concord server in an empty config', () => {
-    const out = upsertMcpServer(undefined, '/tmp/project', 'claude-code');
+    const out = upsertMcpServer(undefined, '/tmp/project');
     expect(out).toContain('mcpServers');
     expect(out).toContain(CONCORD_SERVER_KEY);
     expect(out).toContain(CONCORD_SERVER_COMMAND);
@@ -27,8 +28,8 @@ describe('upsertMcpServer', () => {
   });
 
   it('is idempotent: re-running produces identical output', () => {
-    const once = upsertMcpServer(undefined, '/tmp/project', 'claude-code');
-    const twice = upsertMcpServer(once, '/tmp/project', 'claude-code');
+    const once = upsertMcpServer(undefined, '/tmp/project');
+    const twice = upsertMcpServer(once, '/tmp/project');
     expect(twice).toBe(once);
   });
 
@@ -37,7 +38,7 @@ describe('upsertMcpServer', () => {
       $schema: 'https://example.test/schema.json',
       mcpServers: { other: { command: 'other-server', args: ['--flag'] } },
     });
-    const out = upsertMcpServer(existing, '/tmp/project', 'claude-code');
+    const out = upsertMcpServer(existing, '/tmp/project');
     expect(out).toContain('"$schema"');
     expect(out).toContain('other-server');
     expect(out).toContain('--flag');
@@ -45,16 +46,18 @@ describe('upsertMcpServer', () => {
   });
 
   it('does not duplicate the server when it is already present', () => {
-    const twice = upsertMcpServer(
-      upsertMcpServer(undefined, '/tmp/project', 'claude-code'),
-      '/tmp/project',
-      'claude-code',
-    );
+    const twice = upsertMcpServer(upsertMcpServer(undefined, '/tmp/project'), '/tmp/project');
     expect(twice.split(CONCORD_SERVER_COMMAND).length - 1).toBe(1);
   });
 
+  it('supports extra environment variables such as CONCORD_AGENT_KIND', () => {
+    const out = upsertMcpServer(undefined, '/tmp/project', { CONCORD_AGENT_KIND: 'antigravity' });
+    expect(out).toContain('"CONCORD_AGENT_KIND": "antigravity"');
+    expect(out).toContain('"CONCORD_REPO_ROOT": "/tmp/project"');
+  });
+
   it('throws on malformed JSON rather than discarding it', () => {
-    expect(() => upsertMcpServer('{ not json', '/tmp/project', 'claude-code')).toThrow();
+    expect(() => upsertMcpServer('{ not json', '/tmp/project')).toThrow();
   });
 });
 
@@ -66,6 +69,7 @@ describe('installMcpConfigs', () => {
     expect(written).toEqual([
       '.mcp.json',
       join('.cursor', 'mcp.json'),
+      join('.agents', 'mcp_config.json'),
       join('.github', 'mcp.json'),
       join('.gemini', 'settings.json'),
       join('.grok', 'config.toml'),
@@ -74,8 +78,22 @@ describe('installMcpConfigs', () => {
       expect(existsSync(join(root, relPath))).toBe(true);
       const content = readFileSync(join(root, relPath), 'utf8');
       expect(content).toContain(CONCORD_SERVER_COMMAND);
-      expect(content).toContain(root);
+      const escapedRoot = JSON.stringify(root).slice(1, -1);
+      expect(content.includes(root) || content.includes(escapedRoot)).toBe(true);
     }
+    const pinnedKind = (relPath: string): string | undefined =>
+      z
+        .object({
+          mcpServers: z.object({
+            concord: z.object({ env: z.object({ CONCORD_AGENT_KIND: z.string().optional() }) }),
+          }),
+        })
+        .parse(JSON.parse(readFileSync(join(root, relPath), 'utf8'))).mcpServers.concord.env
+        .CONCORD_AGENT_KIND;
+    expect(pinnedKind(join('.agents', 'mcp_config.json'))).toBe('antigravity');
+    expect(pinnedKind(join('.github', 'mcp.json'))).toBe('copilot-cli');
+    // Read by more than one harness, so each resolves its own session instead.
+    expect(pinnedKind('.mcp.json')).toBeUndefined();
     const gemini = z
       .object({
         tools: z.object({ shell: z.object({ backgroundCompletionBehavior: z.string() }) }),
@@ -84,6 +102,30 @@ describe('installMcpConfigs', () => {
       .parse(JSON.parse(readFileSync(join(root, '.gemini', 'settings.json'), 'utf8')));
     expect(gemini.tools.shell.backgroundCompletionBehavior).toBe('inject');
     expect(gemini.experimental.modelSteering).toBe(true);
+  });
+
+  it('preserves an existing custom user-owned concord server in .agents/mcp_config.json', () => {
+    const root = mkdtempSync(join(tmpdir(), 'concord-mcp-config-'));
+    mkdirSync(join(root, '.agents'), { recursive: true });
+    const customConfig = {
+      mcpServers: {
+        concord: {
+          command: 'my-custom-concord',
+          args: ['--custom-flag'],
+          env: { CUSTOM_VAR: '1' },
+        },
+      },
+    };
+    writeFileSync(
+      join(root, '.agents', 'mcp_config.json'),
+      `${JSON.stringify(customConfig, null, 2)}\n`,
+    );
+
+    installMcpConfigs(root);
+    const content = readFileSync(join(root, '.agents', 'mcp_config.json'), 'utf8');
+    expect(content).toContain('my-custom-concord');
+    expect(content).toContain('--custom-flag');
+    expect(content).toContain('CUSTOM_VAR');
   });
 
   it('is idempotent and preserves an existing server', () => {
@@ -121,8 +163,8 @@ describe('upsertGeminiSettings', () => {
       experimental: { customFeature: true },
       mcpServers: { other: { command: 'other' } },
     });
-    const once = upsertGeminiSettings(existing, '/tmp/project', 'gemini');
-    const twice = upsertGeminiSettings(once, '/tmp/project', 'gemini');
+    const once = upsertGeminiSettings(existing, '/tmp/project');
+    const twice = upsertGeminiSettings(once, '/tmp/project');
     const parsed = z
       .object({
         theme: z.string(),
@@ -175,6 +217,53 @@ describe('upsertGrokMcpServer', () => {
     expect(updated).not.toContain('/old');
     expect(updated).toContain('[other]');
   });
+
+  it('refuses an inline mcp_servers table, which TOML cannot add a table to', () => {
+    expect(() => upsertGrokMcpServer('mcp_servers = { other = { command = "x" } }\n')).toThrow(
+      McpConfigParseError,
+    );
+    const dotted = upsertGrokMcpServer('mcp_servers.other.command = "x"\n');
+    expect(dotted).toContain('[mcp_servers.concord]');
+    const afterString = 'prompt = """\n[example]\n"""\nmcp_servers = { other = {} }\n';
+    expect(() => upsertGrokMcpServer(afterString)).toThrow(McpConfigParseError);
+  });
+
+  it('keeps a multi-line string that quotes a Concord table, and what follows it', () => {
+    for (const quote of ['"""', "'''"]) {
+      const existing =
+        `prompt = ${quote}\n[mcp_servers.concord]\ncommand = "quoted"\n${quote}\n` +
+        'after = true\n';
+      expect(removeGrokMcpServer(existing)).toBe(existing.trimEnd());
+      const updated = upsertGrokMcpServer(existing);
+      expect(updated.startsWith(existing)).toBe(true);
+      expect(updated.match(/^\[mcp_servers\.concord\]$/gmu)).toHaveLength(2);
+    }
+  });
+
+  it('still replaces its own tables when one holds a multi-line string', () => {
+    const existing =
+      '[mcp_servers.concord]\ncommand = "old"\nnote = """\n[other]\n"""\n\n[ui]\nmode = 1\n';
+    expect(removeGrokMcpServer(existing)).toBe('[ui]\nmode = 1');
+  });
+
+  it('reads quotes inside single-line strings and comments as text', () => {
+    for (const before of [`a = '"""'`, "a = \"'''\"", '# """ opens nothing', "a = 1 # '''"]) {
+      expect(() => upsertGrokMcpServer(`${before}\nmcp_servers = { other = {} }\n`)).toThrow(
+        McpConfigParseError,
+      );
+      const existing = `${before}\n[mcp_servers.concord]\ncommand = "old"\n`;
+      expect(removeGrokMcpServer(existing)).toBe(before);
+    }
+  });
+});
+
+describe('a server whose quoted name contains a dot', () => {
+  it('is not mistaken for Concord, so its table survives', () => {
+    const other = '[mcp_servers."concord.env"]\ncommand = "other"\n';
+    expect(hasGrokMcpServer(other)).toBe(false);
+    expect(removeGrokMcpServer(other)).toBe(other.trimEnd());
+    expect(upsertGrokMcpServer(other)).toContain('command = "other"');
+  });
 });
 
 describe('removeGlobalCursorConcord', () => {
@@ -203,6 +292,74 @@ describe('removeGlobalCursorConcord', () => {
     expect(removeGlobalCursorConcord({ HOME: home })).toBeUndefined();
   });
 
+  it("keeps a user's own concord server that uses a different command", () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
+    const path = join(home, '.cursor', 'mcp.json');
+    const mine = { command: 'my-own-concord', args: ['--custom'] };
+    const existing = {
+      telemetry: false,
+      mcpServers: { other: { command: 'other' }, concord: mine },
+    };
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(existing, null, 2)}\n`);
+
+    expect(removeGlobalCursorConcord({ HOME: home })).toBeUndefined();
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(existing);
+  });
+
+  it('keeps a custom server whose path merely contains the package name', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
+    const path = join(home, '.cursor', 'mcp.json');
+    const mine = { command: 'node', args: ['/opt/@concord-ai/concord-mcp-wrapper/server.js'] };
+    const existing = { mcpServers: { concord: mine } };
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(existing, null, 2)}\n`);
+
+    expect(removeGlobalCursorConcord({ HOME: home })).toBeUndefined();
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(existing);
+  });
+
+  it('removes an entry pinned to a version of the published package', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
+    const path = join(home, '.cursor', 'mcp.json');
+    const existing = {
+      mcpServers: {
+        concord: { command: 'npx', args: ['-y', '@concord-ai/concord-mcp@0.9.1'] },
+      },
+    };
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(existing, null, 2)}\n`);
+
+    expect(removeGlobalCursorConcord({ HOME: home })).toBe(path);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ mcpServers: {} });
+  });
+
+  it('keeps an entry whose arguments are not all strings', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
+    const path = join(home, '.cursor', 'mcp.json');
+    const existing = { mcpServers: { concord: { command: 'npx', args: ['-y', 42] } } };
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(existing, null, 2)}\n`);
+
+    expect(removeGlobalCursorConcord({ HOME: home })).toBeUndefined();
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(existing);
+  });
+
+  it('removes an entry that points at the published package under another name', () => {
+    const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
+    const path = join(home, '.cursor', 'mcp.json');
+    const existing = {
+      mcpServers: {
+        concord: { command: 'bunx', args: ['@concord-ai/concord-mcp@latest'] },
+      },
+    };
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(existing, null, 2)}\n`);
+
+    expect(removeGlobalCursorConcord({ HOME: home })).toBe(path);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ mcpServers: {} });
+  });
+
   it('leaves malformed global Cursor config untouched', () => {
     const home = mkdtempSync(join(tmpdir(), 'concord-cursor-home-'));
     const path = join(home, '.cursor', 'mcp.json');
@@ -222,6 +379,9 @@ describe('hasGrokMcpServer', () => {
       '[mcp_servers.concord.env]\nA = "1"',
       '[mcp_servers]\nconcord = { command = "x" }',
       'mcp_servers.concord.command = "x"',
+      'mcp_servers = { concord = { command = "x" } }',
+      'mcp_servers = { other = { command = "y" }, "concord" = { command = "x" } }',
+      'mcp_servers = { concord.command = "x" }',
     ]) {
       expect(hasGrokMcpServer(toml)).toBe(true);
     }
@@ -230,6 +390,9 @@ describe('hasGrokMcpServer', () => {
       '[mcp_servers]\nconcord_x = { command = "x" }',
       '[other]\nconcord = { command = "x" }',
       '# [mcp_servers.concord]',
+      'prompt = """\n[mcp_servers.concord]\n"""',
+      'mcp_servers = { other = { concord = "x" } }',
+      'mcp_servers = { other = "concord = 1" }',
     ]) {
       expect(hasGrokMcpServer(toml)).toBe(false);
     }

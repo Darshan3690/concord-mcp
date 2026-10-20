@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 
 import { writeArtifacts } from '../../artifacts/index.js';
+import { installAntigravityHooks } from '../../install/antigravity-hooks.js';
 import { installClaudeHook } from '../../install/claude-hooks.js';
 import { installCodexMcpConfig } from '../../install/codex-config.js';
 import { applyGlobalMode, type GlobalModeReport } from '../../install/global-mode.js';
@@ -35,6 +36,8 @@ export interface SetupOptions {
   requireAdapters?: boolean;
   /** Turn global mode on or off, as `resolveGlobalChoice` decided; undefined leaves it. */
   global?: boolean;
+  /** Save whether sessions repair their own harness adapter; undefined leaves it. */
+  autoAdapters?: boolean;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -112,6 +115,28 @@ export async function resolveGlobalChoice(
   if (current !== undefined) return current ? true : undefined;
   if (!dependencies.interactive) return undefined;
   return (dependencies.ask ?? askGlobalMode)();
+}
+
+/** Yes by default; no answer leaves the setting as it is. */
+async function askAutoAdapters(): Promise<boolean | undefined> {
+  const answer = await askQuestion(
+    'When you add a coding client later, let Concord install its adapter the first time it ' +
+      "starts? For Grok this installs and trusts Concord's plugin. [Y/n] ",
+  );
+  return answer === undefined ? undefined : !/^(?:n|no)$/iu.test(answer.trim());
+}
+
+/**
+ * Whether sessions may install or repair their harness adapter: a flag
+ * decides, a saved answer stands, and otherwise the question is asked once.
+ */
+export async function resolveAutoAdaptersChoice(
+  dependencies: GlobalChoiceDependencies,
+): Promise<boolean | undefined> {
+  if (dependencies.flag !== undefined) return dependencies.flag;
+  if (readUserConfig(dependencies.env).autoAdapters !== undefined) return undefined;
+  if (!dependencies.interactive) return undefined;
+  return (dependencies.ask ?? askAutoAdapters)();
 }
 
 async function askToUpgrade(update: AvailableUpdate): Promise<boolean> {
@@ -205,6 +230,7 @@ export function runSetup(cwd: string, options: SetupOptions = {}): SetupResult {
   }
   if (options.mcp !== false) {
     written.push(...installMcpConfigs(ctx.repoRoot));
+    written.push(installAntigravityHooks(ctx.repoRoot));
     // Global mode owns a user-level Cursor entry; without it, one is a stale
     // registration that would shadow this repository's pinned one.
     const migratedCursorConfig =
@@ -230,6 +256,9 @@ export function runSetup(cwd: string, options: SetupOptions = {}): SetupResult {
         .join(', ');
       throw new Error(`Required harness adapters are incomplete: ${incomplete}`);
     }
+  }
+  if (options.autoAdapters !== undefined) {
+    written.push(writeUserConfig(env, { autoAdapters: options.autoAdapters }));
   }
   let globalMode: GlobalModeReport | undefined;
   if (options.global !== undefined) {
@@ -269,6 +298,8 @@ export function registerSetupCommand(program: Command): void {
     .option('--require-adapters', 'fail unless every detected harness adapter is ready')
     .option('--global', 'let agents use Concord in repositories that were not set up')
     .option('--no-global', 'turn that off and remove its user-level instructions')
+    .option('--auto-adapters', 'install a harness adapter when a session finds it missing')
+    .option('--no-auto-adapters', 'only report a missing harness adapter')
     .action(async (options) => {
       try {
         if (await maybeUpgradeBeforeSetup()) return;
@@ -278,11 +309,20 @@ export function registerSetupCommand(program: Command): void {
           env: process.env,
           interactive: process.stdin.isTTY && process.stdout.isTTY,
         });
+        const autoAdapters =
+          options.adapters && options.mcp
+            ? await resolveAutoAdaptersChoice({
+                ...(options.autoAdapters === undefined ? {} : { flag: options.autoAdapters }),
+                env: process.env,
+                interactive: process.stdin.isTTY && process.stdout.isTTY,
+              })
+            : undefined;
         const setupOptions: SetupOptions = {
           mcp: options.mcp,
           adapters: options.adapters,
           ...(options.requireAdapters === true ? { requireAdapters: true } : {}),
           ...(global === undefined ? {} : { global }),
+          ...(autoAdapters === undefined ? {} : { autoAdapters }),
         };
         if (options.claudeHooks === true) {
           setupOptions.claudeHooks = true;
